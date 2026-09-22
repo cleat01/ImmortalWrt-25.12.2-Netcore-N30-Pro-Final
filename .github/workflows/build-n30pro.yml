@@ -1,4 +1,4 @@
-name: Build ImmortalWrt 25.12.2 Netcore N30 Pro Final
+name: Build ImmortalWrt 25.12.2 Netcore N30 Pro USB Fix
 
 on:
   workflow_dispatch:
@@ -12,10 +12,11 @@ jobs:
 
     steps:
 
-      - name: Install build environment
+      - name: Install build dependencies
         shell: bash
         run: |
           set -e
+
           sudo bash -c \
           'bash <(curl -fsSL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
 
@@ -26,130 +27,176 @@ jobs:
           set -e
 
           git clone \
-          --depth 1 \
-          --branch v25.12.2 \
-          https://github.com/immortalwrt/immortalwrt.git \
-          immortalwrt
+            --depth 1 \
+            --branch v25.12.2 \
+            https://github.com/immortalwrt/immortalwrt.git \
+            immortalwrt
 
           cd immortalwrt
 
+          echo "ImmortalWrt:"
           git describe --tags --always
+
+          echo "Commit:"
           git rev-parse HEAD
 
 
-      - name: Clone N30 Pro patch
+      - name: Clone Netcore N30 Pro patch
         shell: bash
         run: |
           set -e
 
           git clone \
-          --depth 1 \
-          https://github.com/liuyi-htu/Netcore-N30-Pro-patch-for-OpenWrt.git \
-          n30-patch
+            --depth 1 \
+            https://github.com/liuyi-htu/Netcore-N30-Pro-patch-for-OpenWrt.git \
+            n30-patch
 
 
-      - name: Apply N30 Pro patch
+      - name: Apply N30 Pro patch if required
         shell: bash
         working-directory: immortalwrt
         run: |
           set -e
 
-          echo "Checking N30 adaptation"
-
-          DTS=$(find target/linux/mediatek/dts \
-          -iname "*n30*" \
-          | wc -l)
-
-          DEVICE=$(grep "^define Device/" \
-          target/linux/mediatek/image/filogic.mk \
-          | grep -Ei "n30|nx30" \
-          | wc -l)
+          DTS_OK=0
+          DEVICE_OK=0
 
 
-          if [ "$DTS" -eq 0 ] || [ "$DEVICE" -eq 0 ]; then
+          if find target/linux/mediatek/dts \
+             -iname "*n30*" \
+             | grep -q .; then
+              DTS_OK=1
+          fi
 
-              echo "Applying patch"
+
+          if grep -Eq \
+          "define Device/.*(n30|nx30)" \
+          target/linux/mediatek/image/filogic.mk; then
+              DEVICE_OK=1
+          fi
+
+
+          if [ "$DTS_OK" -eq 1 ] && [ "$DEVICE_OK" -eq 1 ]; then
+
+              echo "N30 Pro support already exists"
+
+          else
+
+              echo "Applying N30 Pro adaptation patch"
 
               bash ../n30-patch/scripts/apply-netcore-n30pro.sh \
               ../n30-patch
 
-          else
-
-              echo "N30 support detected"
-
           fi
 
 
-      - name: Detect N30 profile
+      - name: Verify N30 device definition
         shell: bash
         working-directory: immortalwrt
         run: |
           set -e
 
-          echo "Available N30 profiles"
+
+          echo "Available N30 related devices:"
+
 
           grep "^define Device/" \
           target/linux/mediatek/image/filogic.mk \
-          | grep -Ei "n30|nx30"
+          | grep -Ei "n30|nx30" || true
 
 
-          DEVICE=$(grep "^define Device/" \
-          target/linux/mediatek/image/filogic.mk \
-          | grep -Ei "n30|nx30" \
-          | sed 's/define Device\///' \
-          | head -1)
-
-
-          if [ -z "$DEVICE" ]; then
-              echo "ERROR: N30 profile missing"
-              exit 1
-          fi
-
-
-          if echo "$DEVICE" | grep -qi n60; then
-              echo "ERROR: N60 selected"
-              exit 1
-          fi
-
-
-          echo "DEVICE=$DEVICE"
-
-          echo "N30_DEVICE=$DEVICE" >> $GITHUB_ENV
-
-
-      - name: Verify USB VBUS DTS
+      - name: Select N30 Pro device
         shell: bash
         working-directory: immortalwrt
         run: |
           set -e
 
-          DTS=$(find target/linux/mediatek/dts \
-          -iname "*n30*" \
-          | head -1)
+
+          DEVICE=""
 
 
-          if [ ! -f "$DTS" ]; then
-              echo "DTS missing"
+          if grep -q \
+          "^define Device/netcore_n30-pro" \
+          target/linux/mediatek/image/filogic.mk; then
+
+              DEVICE="netcore_n30-pro"
+
+
+          elif grep -q \
+          "^define Device/netcore_n30" \
+          target/linux/mediatek/image/filogic.mk; then
+
+              DEVICE="netcore_n30"
+
+
+          elif grep -q \
+          "^define Device/netis_nx30v2" \
+          target/linux/mediatek/image/filogic.mk; then
+
+              DEVICE="netis_nx30v2"
+
+          fi
+
+
+          if [ -z "$DEVICE" ]; then
+              echo "ERROR: N30 Pro device not found"
               exit 1
           fi
 
 
+          if echo "$DEVICE" | grep -qi "n60"; then
+              echo "ERROR: Wrong device N60"
+              exit 1
+          fi
+
+
+          echo "Selected device: $DEVICE"
+
+          echo "N30_DEVICE=$DEVICE" >> "$GITHUB_ENV"
+
+      - name: Verify N30 USB VBUS DTS
+        shell: bash
+        working-directory: immortalwrt
+        run: |
+          set -e
+
+
+          DTS=$(find target/linux/mediatek/dts \
+          -iname "*n30*" \
+          -o \
+          -iname "*nx30*" \
+          | grep ".dts" \
+          | head -1)
+
+
+          if [ -z "$DTS" ]; then
+              echo "ERROR: N30 DTS not found"
+              exit 1
+          fi
+
+
+          echo "DTS:"
+          echo "$DTS"
+
+
           grep -Fq \
-          'usb-vbus' \
+          "usb-vbus" \
           "$DTS"
 
 
           grep -Fq \
-          'GPIO_ACTIVE_HIGH' \
+          "GPIO_ACTIVE_HIGH" \
           "$DTS"
 
 
           grep -Fq \
-          'vbus-supply' \
+          "vbus-supply" \
           "$DTS"
 
 
-          echo "USB VBUS DTS OK"
+          echo "USB VBUS DTS verified"
+
+
 
       - name: Update feeds
         shell: bash
@@ -163,29 +210,21 @@ jobs:
 
 
 
-      - name: Generate N30 Pro configuration
+      - name: Generate configuration
         shell: bash
         working-directory: immortalwrt
         run: |
           set -e
 
 
-          echo "Generate .config"
-
-
           rm -f .config
 
-
-          #
-          # Target
-          #
 
           echo "CONFIG_TARGET_mediatek=y" >> .config
 
           echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
 
           echo "CONFIG_TARGET_mediatek_filogic_DEVICE_${N30_DEVICE}=y" >> .config
-
 
 
           #
@@ -199,7 +238,7 @@ jobs:
 
 
           #
-          # USB 3.0 / XHCI
+          # USB 3 / XHCI
           #
 
           echo "CONFIG_PACKAGE_kmod-usb3=y" >> .config
@@ -220,7 +259,7 @@ jobs:
 
           echo "CONFIG_PACKAGE_block-mount=y" >> .config
 
-          echo "CONFIG_PACKAGE_blockd=y"
+          echo "CONFIG_PACKAGE_blockd=y" >> .config
 
 
 
@@ -237,7 +276,7 @@ jobs:
 
 
           #
-          # USB 4G/5G Modem
+          # USB 4G/5G modem
           #
 
           echo "CONFIG_PACKAGE_kmod-usb-net=y" >> .config
@@ -248,13 +287,11 @@ jobs:
 
           echo "CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y" >> .config
 
-
           echo "CONFIG_PACKAGE_kmod-usb-serial=y" >> .config
 
           echo "CONFIG_PACKAGE_kmod-usb-serial-option=y" >> .config
 
           echo "CONFIG_PACKAGE_kmod-usb-wdm=y" >> .config
-
 
           echo "CONFIG_PACKAGE_usb-modeswitch=y" >> .config
 
@@ -265,7 +302,7 @@ jobs:
 
 
           #
-          # MWAN3 Load Balance
+          # MWAN3
           #
 
           echo "CONFIG_PACKAGE_mwan3=y" >> .config
@@ -285,7 +322,7 @@ jobs:
 
 
           #
-          # Network tools
+          # Tools
           #
 
           echo "CONFIG_PACKAGE_curl=y" >> .config
@@ -298,20 +335,18 @@ jobs:
 
 
 
-          #
-          # Apply dependency resolution
-          #
-
           make defconfig
 
 
 
           echo "Final target:"
-          grep "CONFIG_TARGET_mediatek_filogic_DEVICE" .config
+          grep \
+          "CONFIG_TARGET_mediatek_filogic_DEVICE" \
+          .config
 
 
 
-      - name: Verify target and packages
+      - name: Verify configuration
         shell: bash
         working-directory: immortalwrt
         run: |
@@ -328,32 +363,19 @@ jobs:
 
 
           if echo "$TARGET" | grep -qi "n60"; then
-
-              echo "ERROR: N60 detected"
-
+              echo "ERROR: N60 selected"
               exit 1
-
           fi
-
 
 
           if ! echo "$TARGET" | grep -Eqi "n30|nx30"; then
-
-              echo "ERROR: Not N30 target"
-
+              echo "ERROR: Target is not N30"
               exit 1
-
           fi
-
 
 
           grep -Fq \
           "CONFIG_PACKAGE_kmod-usb3=y" \
-          .config
-
-
-          grep -Fq \
-          "CONFIG_PACKAGE_kmod-usb-xhci-mtk=y" \
           .config
 
 
@@ -367,14 +389,11 @@ jobs:
           .config
 
 
-
           echo "Configuration verification passed"
 
 
 
-
-
-      - name: Inject custom IPK packages
+      - name: Inject custom IPK
         shell: bash
         working-directory: immortalwrt
         run: |
@@ -383,7 +402,6 @@ jobs:
 
           mkdir -p \
           files/usr/share/custom-packages
-
 
 
           if [ -d ../custom_packages ]; then
@@ -396,10 +414,7 @@ jobs:
           fi
 
 
-
-          echo "Custom IPK injection completed"
-
-
+          echo "Custom IPK completed"
 
 
 
@@ -421,7 +436,9 @@ jobs:
           set -e
 
 
-          echo "Start compiling ImmortalWrt"
+          echo "================================"
+          echo "Start building firmware"
+          echo "================================"
 
 
           make -j$(nproc) V=s \
@@ -429,18 +446,17 @@ jobs:
 
 
 
-      - name: Verify compiled XHCI modules
+
+
+      - name: Verify XHCI kernel modules
         shell: bash
         working-directory: immortalwrt
         run: |
           set -e
 
 
-          echo "Checking XHCI kernel modules"
+          echo "Checking xhci-hcd.ko"
 
-
-
-          echo "xhci-hcd:"
 
           find build_dir \
           -name "xhci-hcd.ko" \
@@ -448,7 +464,10 @@ jobs:
 
 
 
-          echo "xhci-mtk-hcd:"
+          echo
+
+          echo "Checking xhci-mtk-hcd.ko"
+
 
           find build_dir \
           -name "xhci-mtk-hcd.ko" \
@@ -456,19 +475,19 @@ jobs:
 
 
 
-          XHCI=$(find build_dir \
+          XHCI_COUNT=$(find build_dir \
           -name "xhci-hcd.ko" \
           | wc -l)
 
 
 
-          MTK_XHCI=$(find build_dir \
+          MTK_COUNT=$(find build_dir \
           -name "xhci-mtk-hcd.ko" \
           | wc -l)
 
 
 
-          if [ "$XHCI" -eq 0 ]; then
+          if [ "$XHCI_COUNT" -eq 0 ]; then
 
               echo "ERROR: xhci-hcd.ko missing"
 
@@ -478,7 +497,7 @@ jobs:
 
 
 
-          if [ "$MTK_XHCI" -eq 0 ]; then
+          if [ "$MTK_COUNT" -eq 0 ]; then
 
               echo "ERROR: xhci-mtk-hcd.ko missing"
 
@@ -488,20 +507,20 @@ jobs:
 
 
 
-          echo "XHCI verification passed"
+          echo "XHCI module verification passed"
 
 
 
 
 
-      - name: Verify modules in root filesystem
+      - name: Verify rootfs USB modules
         shell: bash
         working-directory: immortalwrt
         run: |
           set -e
 
 
-          echo "Checking rootfs modules"
+          echo "Checking root filesystem modules"
 
 
 
@@ -529,7 +548,7 @@ jobs:
 
           if [ "$COUNT" -lt 2 ]; then
 
-              echo "ERROR: USB XHCI modules not included in rootfs"
+              echo "ERROR: USB XHCI modules missing from rootfs"
 
               exit 1
 
@@ -543,7 +562,7 @@ jobs:
 
 
 
-      - name: Verify N30 firmware output
+      - name: Verify firmware output
         shell: bash
         working-directory: immortalwrt
         run: |
@@ -554,7 +573,7 @@ jobs:
 
 
 
-          echo "Generated firmware files:"
+          echo "Firmware files:"
 
 
           find "$TARGET" \
@@ -567,31 +586,42 @@ jobs:
 
           echo
 
+          echo "Checking N60 forbidden output"
+
+
+
+          if find "$TARGET" \
+          -type f \
+          -iname "*n60*" \
+          | grep -q .; then
+
+
+              echo "ERROR: N60 firmware detected"
+
+              exit 1
+
+
+          fi
+
+
+
+          echo
+
           echo "Checking N30 output"
 
 
 
-          N30_COUNT=$(find "$TARGET" \
+          if ! find "$TARGET" \
           -type f \
           \( \
           -iname "*n30*" \
           -o \
           -iname "*nx30*" \
           \) \
-          | wc -l)
+          | grep -q .; then
 
 
-
-          N60_COUNT=$(find "$TARGET" \
-          -type f \
-          -iname "*n60*" \
-          | wc -l)
-
-
-
-          if [ "$N60_COUNT" -gt 0 ]; then
-
-              echo "ERROR: N60 firmware generated"
+              echo "ERROR: N30 firmware not found"
 
               exit 1
 
@@ -599,17 +629,7 @@ jobs:
 
 
 
-          if [ "$N30_COUNT" -eq 0 ]; then
-
-              echo "ERROR: No N30 firmware generated"
-
-              exit 1
-
-          fi
-
-
-
-          echo "N30 firmware verification passed"
+          echo "Firmware verification passed"
 
 
 
@@ -628,17 +648,17 @@ jobs:
 
           {
 
-          echo "=============================================="
+          echo "======================================"
 
           echo "ImmortalWrt 25.12.2 Netcore N30 Pro"
 
-          echo "=============================================="
+          echo "======================================"
+
+
 
           echo
 
-
-
-          echo "Source:"
+          echo "Git:"
 
           git describe --tags --always
 
@@ -658,7 +678,7 @@ jobs:
 
           grep \
           "CONFIG_TARGET_mediatek_filogic_DEVICE" \
-          .config
+          .config || true
 
 
 
@@ -677,7 +697,8 @@ jobs:
           echo "XHCI modules:"
 
           find build_dir \
-          -name "xhci*.ko"
+          -name "xhci*.ko" \
+          -print
 
 
 
@@ -687,8 +708,7 @@ jobs:
 
           find bin/targets/mediatek/filogic \
           -type f \
-          | grep -E \
-          "n30|nx30"
+          | grep -Ei "n30|nx30"
 
 
 
