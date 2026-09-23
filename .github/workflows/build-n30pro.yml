@@ -12,12 +12,15 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v5
+
 
       - name: Install dependencies
         run: |
           sudo apt update
+
           sudo apt install -y \
             build-essential \
             clang \
@@ -33,7 +36,9 @@ jobs:
             unzip \
             zstd \
             file \
-            binutils
+            binutils \
+            p7zip-full
+
 
       - name: Clone ImmortalWrt
         run: |
@@ -43,14 +48,16 @@ jobs:
             https://github.com/immortalwrt/immortalwrt.git \
             immortalwrt
 
-      - name: Verify N30 Pro target
+
+      - name: Verify N30 Pro device
         working-directory: immortalwrt
         run: |
-          grep -R "netis_nx30v2" target/linux/mediatek/image
+          grep -R "netis_nx30v2" target/linux/mediatek/image || exit 1
 
-      - name: Prepare StarVPN package
+
+      - name: Extract StarVPN IPK
         run: |
-          set -e
+          set +e
 
           test -f "${STARVPN_IPK}"
 
@@ -61,61 +68,100 @@ jobs:
 
           ar x "${GITHUB_WORKSPACE}/${STARVPN_IPK}"
 
-          test -f data.tar.gz
+          ls -la /tmp/starvpn
 
-          tar xzf data.tar.gz
+
+          if [ -f control.tar.gz ]; then
+              tar xzf control.tar.gz
+          fi
+
+
+          if [ -f data.tar.gz ]; then
+              tar xzf data.tar.gz
+          fi
+
+
+          echo "StarVPN extracted files:"
+          find /tmp/starvpn -type f
+
 
           cd "${GITHUB_WORKSPACE}"
 
-          mkdir -p immortalwrt/package/starvpn/starvpn/files
+
+      - name: Install StarVPN files
+        run: |
+          mkdir -p \
+          immortalwrt/package/starvpn/starvpn/files
+
 
           if [ -d /tmp/starvpn/usr ]; then
-            cp -a /tmp/starvpn/usr \
-            immortalwrt/package/starvpn/starvpn/files/
+
+              cp -a \
+              /tmp/starvpn/usr \
+              immortalwrt/package/starvpn/starvpn/files/
+
           fi
+
 
           if [ -d /tmp/starvpn/etc ]; then
-            cp -a /tmp/starvpn/etc \
-            immortalwrt/package/starvpn/starvpn/files/
+
+              cp -a \
+              /tmp/starvpn/etc \
+              immortalwrt/package/starvpn/starvpn/files/
+
           fi
 
-          find /tmp/starvpn -maxdepth 3 -type f
 
-      - name: Create StarVPN Makefile
+          find \
+          immortalwrt/package/starvpn/starvpn/files \
+          -maxdepth 5 \
+          -type f
+
+
+      - name: Create StarVPN package
         run: |
-          mkdir -p immortalwrt/package/starvpn/starvpn
+          mkdir -p \
+          immortalwrt/package/starvpn/starvpn
+
 
           printf '%s\n' \
           'include $(TOPDIR)/rules.mk' \
+          '' \
           'PKG_NAME:=starvpn' \
           'PKG_VERSION:=6.1.0' \
           'PKG_RELEASE:=1' \
+          '' \
           'include $(INCLUDE_DIR)/package.mk' \
           '' \
           'define Package/starvpn' \
-          ' SECTION:=net' \
-          ' CATEGORY:=Network' \
-          ' TITLE:=StarVPN' \
-          ' DEPENDS:=+kmod-tun' \
+          '  SECTION:=net' \
+          '  CATEGORY:=Network' \
+          '  TITLE:=StarVPN' \
+          '  DEPENDS:=+kmod-tun' \
           'endef' \
           '' \
           'define Package/starvpn/install' \
-          ' $(INSTALL_DIR) $(1)/usr/bin' \
-          ' cp -a ./files/usr/bin/* $(1)/usr/bin/' \
-          ' $(INSTALL_DIR) $(1)/etc/init.d' \
-          ' cp -a ./files/etc/init.d/starvpn $(1)/etc/init.d/' \
+          '	$(INSTALL_DIR) $(1)/usr/bin' \
+          '	cp -a ./files/usr/bin/* $(1)/usr/bin/' \
+          '	$(INSTALL_DIR) $(1)/etc/init.d' \
+          '	cp -a ./files/etc/init.d/starvpn $(1)/etc/init.d/' \
           'endef' \
           '' \
           '$(eval $(call BuildPackage,starvpn))' \
           > immortalwrt/package/starvpn/starvpn/Makefile
 
+
       - name: Configure feeds
         working-directory: immortalwrt
         run: |
           echo "src-link starvpn $(pwd)/package/starvpn" >> feeds.conf.default
+
           ./scripts/feeds update -a
+
           ./scripts/feeds install -a
+
           ./scripts/feeds install starvpn
+
 
       - name: Configure firmware
         working-directory: immortalwrt
@@ -148,13 +194,17 @@ jobs:
           'CONFIG_PACKAGE_starvpn=y' \
           > .config
 
+
           make defconfig
 
-      - name: Build
+
+      - name: Build firmware
         working-directory: immortalwrt
         run: |
           make download -j$(nproc)
+
           make -j$(nproc) V=s
+
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4
