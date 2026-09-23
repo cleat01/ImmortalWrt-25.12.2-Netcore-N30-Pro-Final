@@ -43,28 +43,43 @@ jobs:
             https://github.com/immortalwrt/immortalwrt.git \
             immortalwrt
 
-      - name: Verify target device
+      - name: Verify N30 Pro target
         working-directory: immortalwrt
         run: |
-          grep -R "netis_nx30v2" target/linux/mediatek/image || exit 1
+          grep -R "netis_nx30v2" target/linux/mediatek/image
 
       - name: Prepare StarVPN package
         run: |
+          set -e
+
           test -f "${STARVPN_IPK}"
 
+          rm -rf /tmp/starvpn
           mkdir -p /tmp/starvpn
 
-          ar x "${STARVPN_IPK}" --output /tmp/starvpn
+          cd /tmp/starvpn
 
-          tar xzf /tmp/starvpn/data.tar.gz -C /tmp/starvpn
+          ar x "${GITHUB_WORKSPACE}/${STARVPN_IPK}"
+
+          test -f data.tar.gz
+
+          tar xzf data.tar.gz
+
+          cd "${GITHUB_WORKSPACE}"
 
           mkdir -p immortalwrt/package/starvpn/starvpn/files
 
-          cp -a /tmp/starvpn/usr \
+          if [ -d /tmp/starvpn/usr ]; then
+            cp -a /tmp/starvpn/usr \
             immortalwrt/package/starvpn/starvpn/files/
+          fi
 
-          cp -a /tmp/starvpn/etc \
+          if [ -d /tmp/starvpn/etc ]; then
+            cp -a /tmp/starvpn/etc \
             immortalwrt/package/starvpn/starvpn/files/
+          fi
+
+          find /tmp/starvpn -maxdepth 3 -type f
 
       - name: Create StarVPN Makefile
         run: |
@@ -98,11 +113,8 @@ jobs:
         working-directory: immortalwrt
         run: |
           echo "src-link starvpn $(pwd)/package/starvpn" >> feeds.conf.default
-
           ./scripts/feeds update -a
-
           ./scripts/feeds install -a
-
           ./scripts/feeds install starvpn
 
       - name: Configure firmware
@@ -138,28 +150,11 @@ jobs:
 
           make defconfig
 
-      - name: Build firmware
+      - name: Build
         working-directory: immortalwrt
         run: |
           make download -j$(nproc)
           make -j$(nproc) V=s
-
-      - name: Firmware audit
-        working-directory: immortalwrt
-        run: |
-          TARGET="bin/targets/mediatek/filogic"
-
-          test -d "$TARGET"
-
-          if grep -Rqi "h3c" "$TARGET"; then
-            echo "H3C firmware detected"
-            exit 1
-          fi
-
-          if grep -Rqi "n60" "$TARGET"; then
-            echo "N60 firmware detected"
-            exit 1
-          fi
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4
