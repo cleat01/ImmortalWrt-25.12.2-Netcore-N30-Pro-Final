@@ -85,9 +85,9 @@ jobs:
 
           if [ -z "$PATCH" ]; then
 
-            echo "N30 Pro patch missing"
+              echo "N30 patch missing"
 
-            exit 1
+              exit 1
 
           fi
 
@@ -96,40 +96,40 @@ jobs:
           awk '
 
           BEGIN {
-            block=""
-            skip=0
+              block=""
+              skip=0
           }
 
 
           /^diff --git/ {
 
-            if(block!="" && skip==0)
-              print block
+              if(block!="" && skip==0)
+                  print block
 
 
-            block=$0 "\n"
+              block=$0 "\n"
 
 
-            if($0 ~ /11_fix_wifi_mac/)
-              skip=1
-            else
-              skip=0
+              if($0 ~ /11_fix_wifi_mac/)
+                  skip=1
+              else
+                  skip=0
 
 
-            next
+              next
 
           }
 
 
           {
-            block=block $0 "\n"
+              block=block $0 "\n"
           }
 
 
           END {
 
-            if(block!="" && skip==0)
-              print block
+              if(block!="" && skip==0)
+                  print block
 
           }
 
@@ -171,13 +171,12 @@ jobs:
 
 
 
-          echo "StarVPN:"
+          echo "Using:"
           echo "$IPK"
 
 
 
           rm -rf /tmp/starvpn
-
 
           mkdir -p /tmp/starvpn
 
@@ -218,7 +217,7 @@ jobs:
 
           else
 
-              echo "StarVPN data archive missing"
+              echo "StarVPN data missing"
 
               exit 1
 
@@ -233,19 +232,12 @@ jobs:
           rm -rf immortalwrt/package/starvpn
 
 
-
           mkdir -p \
           immortalwrt/package/starvpn/files
 
 
 
-          if [ ! -d /tmp/starvpn/usr ]; then
-
-              echo "StarVPN usr missing"
-
-              exit 1
-
-          fi
+          test -d /tmp/starvpn/usr
 
 
 
@@ -265,30 +257,31 @@ jobs:
 
 
 
-          printf '%s\n' \
-          'include $(TOPDIR)/rules.mk' \
-          '' \
-          'PKG_NAME:=starvpn' \
-          'PKG_VERSION:=6.1.0' \
-          'PKG_RELEASE:=1' \
-          '' \
-          'include $(INCLUDE_DIR)/package.mk' \
-          '' \
-          'define Package/starvpn' \
-          ' SECTION:=net' \
-          ' CATEGORY:=Network' \
-          ' TITLE:=StarVPN' \
-          ' DEPENDS:=+kmod-tun +iptables' \
-          'endef' \
-          '' \
-          'define Package/starvpn/install' \
-          ' $(CP) ./files/* $(1)/' \
-          'endef' \
-          '' \
-          '$(eval $(call BuildPackage,starvpn))' \
-          > immortalwrt/package/starvpn/Makefile
+          cat > immortalwrt/package/starvpn/Makefile <<'EOF'
+include $(TOPDIR)/rules.mk
+
+PKG_NAME:=starvpn
+PKG_VERSION:=6.1.0
+PKG_RELEASE:=1
+
+include $(INCLUDE_DIR)/package.mk
 
 
+define Package/starvpn
+ SECTION:=net
+ CATEGORY:=Network
+ TITLE:=StarVPN
+ DEPENDS:=+kmod-tun +iptables
+endef
+
+
+define Package/starvpn/install
+	$(CP) ./files/* $(1)/
+endef
+
+
+$(eval $(call BuildPackage,starvpn))
+EOF
 
       - name: Verify StarVPN package
         run: |
@@ -306,11 +299,24 @@ jobs:
         working-directory: immortalwrt
         run: |
 
+          set -e
+
+
           DTS="target/linux/mediatek/dts/mt7981b-netcore-n30-pro.dts"
 
 
 
-          test -f "$DTS"
+          if [ ! -f "$DTS" ]; then
+
+              echo "N30 Pro DTS missing"
+
+              exit 1
+
+          fi
+
+
+
+          echo "Checking USB VBUS"
 
 
 
@@ -320,19 +326,27 @@ jobs:
 
 
 
+          echo "Checking XHCI"
+
+
+
           grep -q \
           "xhci" \
           "$DTS"
 
 
 
-          grep -q \
-          "usb@" \
+          echo "Checking USB PHY"
+
+
+
+          grep -Eq \
+          "usb_phy|u2phy|u3phy" \
           "$DTS"
 
 
 
-      - name: Verify target
+      - name: Verify N30 Pro target
         working-directory: immortalwrt
         run: |
 
@@ -364,39 +378,64 @@ jobs:
         working-directory: immortalwrt
         run: |
 
-          printf '%s\n' \
-          'CONFIG_TARGET_mediatek=y' \
-          'CONFIG_TARGET_mediatek_filogic=y' \
-          'CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_netis_nx30v2=y' \
-          'CONFIG_PACKAGE_luci=y' \
-          'CONFIG_PACKAGE_luci-ssl=y' \
-          'CONFIG_PACKAGE_kmod-usb2=y' \
-          'CONFIG_PACKAGE_kmod-usb3=y' \
-          'CONFIG_PACKAGE_kmod-usb-xhci-hcd=y' \
-          'CONFIG_PACKAGE_kmod-usb-storage=y' \
-          'CONFIG_PACKAGE_kmod-usb-storage-uas=y' \
-          'CONFIG_PACKAGE_kmod-tun=y' \
-          'CONFIG_PACKAGE_iptables=y' \
-          'CONFIG_PACKAGE_kmod-usb-net=y' \
-          'CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y' \
-          'CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y' \
-          'CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y' \
-          'CONFIG_PACKAGE_kmod-usb-serial=y' \
-          'CONFIG_PACKAGE_kmod-usb-serial-option=y' \
-          'CONFIG_PACKAGE_kmod-usb-wdm=y' \
-          'CONFIG_PACKAGE_usb-modeswitch=y' \
-          'CONFIG_PACKAGE_uqmi=y' \
-          'CONFIG_PACKAGE_umbim=y' \
-          'CONFIG_PACKAGE_mwan3=y' \
-          'CONFIG_PACKAGE_luci-app-mwan3=y' \
-          'CONFIG_PACKAGE_samba4-server=y' \
-          'CONFIG_PACKAGE_luci-app-samba4=y' \
-          'CONFIG_PACKAGE_starvpn=y' \
-          > .config
+          cat > .config <<'EOF'
+CONFIG_TARGET_mediatek=y
+CONFIG_TARGET_mediatek_filogic=y
+CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_netis_nx30v2=y
 
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-ssl=y
+
+CONFIG_PACKAGE_kmod-usb2=y
+CONFIG_PACKAGE_kmod-usb3=y
+CONFIG_PACKAGE_kmod-usb-xhci-hcd=y
+CONFIG_PACKAGE_kmod-usb-storage=y
+CONFIG_PACKAGE_kmod-usb-storage-uas=y
+
+CONFIG_PACKAGE_block-mount=y
+
+CONFIG_PACKAGE_kmod-tun=y
+CONFIG_PACKAGE_iptables=y
+
+CONFIG_PACKAGE_kmod-usb-net=y
+CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y
+CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y
+CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
+
+CONFIG_PACKAGE_kmod-usb-serial=y
+CONFIG_PACKAGE_kmod-usb-serial-option=y
+CONFIG_PACKAGE_kmod-usb-wdm=y
+
+CONFIG_PACKAGE_usb-modeswitch=y
+CONFIG_PACKAGE_uqmi=y
+CONFIG_PACKAGE_umbim=y
+
+CONFIG_PACKAGE_mwan3=y
+CONFIG_PACKAGE_luci-app-mwan3=y
+
+CONFIG_PACKAGE_samba4-server=y
+CONFIG_PACKAGE_luci-app-samba4=y
+
+CONFIG_PACKAGE_starvpn=y
+EOF
 
 
           make defconfig
+
+
+
+      - name: Verify configuration
+        working-directory: immortalwrt
+        run: |
+
+          grep \
+          "netis_nx30v2" \
+          .config
+
+
+          grep \
+          "CONFIG_PACKAGE_starvpn=y" \
+          .config
 
 
 
@@ -427,7 +466,13 @@ jobs:
 
 
 
-          test -d "$TARGET"
+          if [ ! -d "$TARGET" ]; then
+
+              echo "Firmware output missing"
+
+              exit 1
+
+          fi
 
 
 
@@ -442,7 +487,7 @@ jobs:
           -o \
           -iname "*n60*"; then
 
-              echo "Wrong firmware detected"
+              echo "Wrong device firmware detected"
 
               exit 1
 
