@@ -1,669 +1,323 @@
-name: Build ImmortalWrt 25.12.2 Netcore N30 Pro Final
-
+name: Build ImmortalWrt 25.12.2 Netcore N30 Pro
 
 on:
   workflow_dispatch:
 
-
-permissions:
-  contents: read
-
-
 jobs:
-
   build:
-
     runs-on: ubuntu-24.04
 
+    env:
+      IMMORTALWRT_TAG: v25.12.2
+      DEVICE_PROFILE: netis_nx30v2
 
     steps:
 
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Install build dependencies
-        shell: bash
+
+      - name: Install dependencies
         run: |
-          set -e
+          sudo apt update
 
-          sudo bash -c \
-          'bash <(curl -fsSL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+          sudo apt install -y \
+            build-essential \
+            clang \
+            flex \
+            bison \
+            gawk \
+            gettext \
+            git \
+            libncurses-dev \
+            libssl-dev \
+            python3 \
+            rsync \
+            unzip \
+            zstd \
+            file
 
 
-
-      - name: Clone ImmortalWrt 25.12.2
-        shell: bash
+      - name: Clone ImmortalWrt
         run: |
-          set -e
-
-
           git clone \
-          --depth 1 \
-          --branch v25.12.2 \
-          https://github.com/immortalwrt/immortalwrt.git \
-          immortalwrt
+            --depth 1 \
+            --branch ${IMMORTALWRT_TAG} \
+            https://github.com/immortalwrt/immortalwrt.git \
+            immortalwrt
 
 
-
-          cd immortalwrt
-
-
-          echo "ImmortalWrt version"
-
-          git describe --tags --always
-
-
-
-      - name: Clone Netcore N30 Pro patch
-        shell: bash
-        run: |
-          set -e
-
-
-          git clone \
-          --depth 1 \
-          https://github.com/liuyi-htu/Netcore-N30-Pro-patch-for-OpenWrt.git \
-          n30-patch
-
-
-
-
-      - name: Apply Netcore N30 Pro patch
-        shell: bash
+      - name: Verify source
         working-directory: immortalwrt
         run: |
-          set -e
+          git describe --tags
 
 
-          echo "Applying Netcore N30 Pro patch"
-
-
-
-          bash ../n30-patch/scripts/apply-netcore-n30pro.sh \
-          ../n30-patch
-
-
-
-      - name: Verify Netcore N30 Pro files
-        shell: bash
+      - name: Verify target exists
         working-directory: immortalwrt
         run: |
-          set -e
+          test -d target/linux/mediatek
+          test -d target/linux/mediatek/image
 
 
-          DTS="target/linux/mediatek/dts/mt7981b-netcore-n30-pro.dts"
-
-
-          if [ ! -f "$DTS" ]; then
-
-              echo "ERROR: Netcore N30 Pro DTS missing"
-
-              find target/linux/mediatek/dts \
-              -iname "*n30*" \
-              -print
-
-              exit 1
-
-          fi
-
-
-
-          echo "DTS OK"
-
-
-
+      - name: Verify exact device definition
+        working-directory: immortalwrt
+        run: |
 
           grep -q \
-          "define Device/netcore_n30-pro" \
+          "Device/netis_nx30v2" \
           target/linux/mediatek/image/filogic.mk
 
 
-
-          echo "Device definition OK"
-
-      - name: Update feeds
-        shell: bash
+      - name: Detect N30 DTS from device definition
         working-directory: immortalwrt
         run: |
-          set -e
+
+          awk '
+          /define Device\/netis_nx30v2/ {flag=1}
+          flag && /DEVICE_DTS/ {print}
+          flag && /^endef/ {exit}
+          ' \
+          target/linux/mediatek/image/filogic.mk \
+          > /tmp/n30_dts.conf
+
+
+          cat /tmp/n30_dts.conf
+
+
+          test -s /tmp/n30_dts.conf
+
+
+      - name: Verify USB VBUS support
+        working-directory: immortalwrt
+        run: |
+
+          DTS_NAME=$(awk '{print $2}' /tmp/n30_dts.conf)
+
+          DTS_FILE=$(find \
+          target/linux/mediatek/dts \
+          -name "${DTS_NAME}.dts" \
+          | head -n1)
+
+
+          if [ ! -f "$DTS_FILE" ]; then
+            echo "DTS not found"
+            exit 1
+          fi
+
+
+          echo "Using DTS:"
+          echo "$DTS_FILE"
+
+
+          grep -q "xhci" "$DTS_FILE"
+
+
+          grep -Eq \
+          "vbus-supply|usb-vbus|regulator-usb" \
+          "$DTS_FILE"
+
+
+      - name: Import StarVPN package
+        run: |
+
+          mkdir -p \
+          immortalwrt/package/starvpn/starvpn/files
+
+
+          mkdir -p /tmp/starvpn
+
+
+          tar xf \
+          packages/starvpn_6.1.0_aarch64_cortex-a53.ipk \
+          -C /tmp/starvpn
+
+
+          tar xf \
+          /tmp/starvpn/data.tar.gz \
+          -C /tmp/starvpn
+
+
+          cp -a \
+          /tmp/starvpn/usr \
+          immortalwrt/package/starvpn/starvpn/files/
+
+
+          cp -a \
+          /tmp/starvpn/etc \
+          immortalwrt/package/starvpn/starvpn/files/
+
+
+      - name: Create StarVPN package
+        run: |
+
+          cat > immortalwrt/package/starvpn/starvpn/Makefile <<'EOF'
+include $(TOPDIR)/rules.mk
+
+PKG_NAME:=starvpn
+PKG_VERSION:=6.1.0
+PKG_RELEASE:=1
+
+include $(INCLUDE_DIR)/package.mk
+
+define Package/starvpn
+  SECTION:=net
+  CATEGORY:=Network
+  TITLE:=StarVPN
+  DEPENDS:=+kmod-tun
+endef
+
+define Package/starvpn/install
+
+	$(INSTALL_DIR) $(1)/usr/bin
+	cp -a ./files/usr/bin/* $(1)/usr/bin/
+
+	$(INSTALL_DIR) $(1)/etc/init.d
+	cp -a ./files/etc/init.d/starvpn $(1)/etc/init.d/
+
+endef
+
+$(eval $(call BuildPackage,starvpn))
+EOF
+
+
+      - name: Add StarVPN feed
+        working-directory: immortalwrt
+        run: |
+
+          echo \
+          "src-link starvpn $(pwd)/package/starvpn" \
+          >> feeds.conf.default
+
 
           ./scripts/feeds update -a
 
           ./scripts/feeds install -a
 
+          ./scripts/feeds install starvpn
 
 
-      - name: Configure Netcore N30 Pro
-        shell: bash
+      - name: Create configuration
         working-directory: immortalwrt
         run: |
-          set -e
+
+          cat > .config <<'EOF'
+
+CONFIG_TARGET_mediatek=y
+CONFIG_TARGET_mediatek_filogic=y
+CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_netis_nx30v2=y
 
 
-          rm -f .config
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-ssl=y
 
 
-
-          #
-          # Target
-          #
-
-          echo "CONFIG_TARGET_mediatek=y" >> .config
-
-          echo "CONFIG_TARGET_mediatek_filogic=y" >> .config
-
-          echo "CONFIG_TARGET_mediatek_filogic_DEVICE_netcore_n30-pro=y" >> .config
+CONFIG_PACKAGE_kmod-usb3=y
+CONFIG_PACKAGE_kmod-usb-storage=y
+CONFIG_PACKAGE_kmod-usb-storage-uas=y
+CONFIG_PACKAGE_block-mount=y
 
 
-
-          #
-          # LuCI
-          #
-
-          echo "CONFIG_PACKAGE_luci=y" >> .config
-
-          echo "CONFIG_PACKAGE_luci-ssl=y" >> .config
+CONFIG_PACKAGE_kmod-usb-net=y
+CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y
+CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y
+CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
 
 
-
-          #
-          # USB 3.0
-          #
-
-          echo "CONFIG_PACKAGE_kmod-usb3=y" >> .config
-
-          echo "CONFIG_PACKAGE_kmod-usb-storage=y" >> .config
-
-          echo "CONFIG_PACKAGE_kmod-usb-storage-uas=y" >> .config
-
-          echo "CONFIG_PACKAGE_block-mount=y" >> .config
-
-          echo "CONFIG_PACKAGE_blockd=y" >> .config
+CONFIG_PACKAGE_kmod-usb-serial=y
+CONFIG_PACKAGE_kmod-usb-serial-option=y
+CONFIG_PACKAGE_kmod-usb-wdm=y
 
 
-
-          #
-          # Filesystem
-          #
-
-          echo "CONFIG_PACKAGE_kmod-fs-ext4=y" >> .config
-
-          echo "CONFIG_PACKAGE_kmod-fs-vfat=y" >> .config
-
-          echo "CONFIG_PACKAGE_kmod-fs-exfat=y" >> .config
+CONFIG_PACKAGE_usb-modeswitch=y
+CONFIG_PACKAGE_uqmi=y
+CONFIG_PACKAGE_umbim=y
 
 
-
-          #
-          # USB 4G/5G modem / USB WiFi
-          #
-
-          echo "CONFIG_PACKAGE_kmod-usb-net=y" >> .config
-
-          echo "CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y" >> .config
-
-          echo "CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y" >> .config
-
-          echo "CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y" >> .config
+CONFIG_PACKAGE_mwan3=y
+CONFIG_PACKAGE_luci-app-mwan3=y
 
 
-          echo "CONFIG_PACKAGE_kmod-usb-serial=y" >> .config
-
-          echo "CONFIG_PACKAGE_kmod-usb-serial-option=y" >> .config
-
-          echo "CONFIG_PACKAGE_kmod-usb-wdm=y" >> .config
+CONFIG_PACKAGE_samba4-server=y
+CONFIG_PACKAGE_luci-app-samba4=y
 
 
-          echo "CONFIG_PACKAGE_usb-modeswitch=y" >> .config
+CONFIG_PACKAGE_kmod-tun=y
+CONFIG_PACKAGE_starvpn=y
 
-          echo "CONFIG_PACKAGE_uqmi=y" >> .config
+EOF
 
-          echo "CONFIG_PACKAGE_umbim=y" >> .config
-
-
-
-          #
-          # MWAN3 Load Balance
-          #
-
-          echo "CONFIG_PACKAGE_mwan3=y" >> .config
-
-          echo "CONFIG_PACKAGE_luci-app-mwan3=y" >> .config
-
-
-
-          #
-          # Samba4
-          #
-
-          echo "CONFIG_PACKAGE_samba4-server=y" >> .config
-
-          echo "CONFIG_PACKAGE_luci-app-samba4=y" >> .config
-
-
-
-          #
-          # Network tools
-          #
-
-          echo "CONFIG_PACKAGE_curl=y" >> .config
-
-          echo "CONFIG_PACKAGE_wget-ssl=y" >> .config
-
-          echo "CONFIG_PACKAGE_tcpdump=y" >> .config
-
-          echo "CONFIG_PACKAGE_htop=y" >> .config
-
-
-
-          #
-          # Generate final config
-          #
 
           make defconfig
 
 
-
-          echo "===== Final Target ====="
+      - name: Verify config
+        working-directory: immortalwrt
+        run: |
 
           grep \
-          "CONFIG_TARGET_mediatek_filogic_DEVICE" \
+          "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_netis_nx30v2=y" \
           .config
 
 
-
-
-      - name: Verify final configuration
-        shell: bash
-        working-directory: immortalwrt
-        run: |
-          set -e
-
-
-          echo "Checking target"
-
-
-
-          grep -Fxq \
-          "CONFIG_TARGET_mediatek_filogic_DEVICE_netcore_n30-pro=y" \
+          grep \
+          "CONFIG_PACKAGE_starvpn=y" \
           .config
 
 
-
-          echo "Checking USB packages"
-
-
-
-          grep -Fxq \
-          "CONFIG_PACKAGE_kmod-usb3=y" \
-          .config
-
-
-
-          grep -Fxq \
-          "CONFIG_PACKAGE_kmod-usb-storage=y" \
-          .config
-
-
-
-          echo "Checking MWAN3"
-
-
-
-          grep -Fxq \
-          "CONFIG_PACKAGE_mwan3=y" \
-          .config
-
-
-
-          echo "Checking Samba4"
-
-
-
-          grep -Fxq \
-          "CONFIG_PACKAGE_samba4-server=y" \
-          .config
-
-
-
-          echo "Configuration verification passed"
-
-
-
-
-      - name: Inject custom IPK packages
-        shell: bash
+      - name: Download
         working-directory: immortalwrt
         run: |
-          set -e
+
+          make download -j$(nproc)
 
 
-          mkdir -p \
-          files/usr/share/custom-packages
-
-
-
-          if [ -d ../custom_packages ]; then
-
-              cp \
-              ../custom_packages/*.ipk \
-              files/usr/share/custom-packages/ \
-              2>/dev/null || true
-
-          fi
-
-
-
-          echo "Custom IPK injection complete"
-
-
-
-
-      - name: Download packages
-        shell: bash
+      - name: Build
         working-directory: immortalwrt
         run: |
-          set -e
+
+          make -j$(nproc) V=s
 
 
-          make download \
-          -j$(nproc) \
-          V=s
-      - name: Build firmware
-        shell: bash
+      - name: Firmware audit
         working-directory: immortalwrt
         run: |
-          set -e
-
-
-          echo "================================"
-          echo "Build ImmortalWrt 25.12.2"
-          echo "Netcore N30 Pro"
-          echo "================================"
-
-
-          make -j$(nproc) V=s \
-          || make -j1 V=s
-
-
-
-
-      - name: Verify USB XHCI modules
-        shell: bash
-        working-directory: immortalwrt
-        run: |
-          set -e
-
-
-          echo "================================"
-          echo "Verify XHCI modules"
-          echo "================================"
-
-
-          echo "Search xhci-hcd.ko"
-
-          find build_dir \
-          -name "xhci-hcd.ko" \
-          -print
-
-
-
-          echo
-
-          echo "Search xhci-mtk-hcd.ko"
-
-          find build_dir \
-          -name "xhci-mtk-hcd.ko" \
-          -print
-
-
-
-          XHCI=$(find build_dir \
-          -name "xhci-hcd.ko" \
-          | wc -l)
-
-
-
-          MTK=$(find build_dir \
-          -name "xhci-mtk-hcd.ko" \
-          | wc -l)
-
-
-
-          if [ "$XHCI" -eq 0 ]; then
-
-              echo "ERROR: xhci-hcd.ko missing"
-
-              exit 1
-
-          fi
-
-
-
-          if [ "$MTK" -eq 0 ]; then
-
-              echo "ERROR: xhci-mtk-hcd.ko missing"
-
-              exit 1
-
-          fi
-
-
-
-          echo "XHCI verification passed"
-
-
-
-
-
-      - name: Verify N30 DTS after build
-        shell: bash
-        working-directory: immortalwrt
-        run: |
-          set -e
-
-
-          DTS="target/linux/mediatek/dts/mt7981b-netcore-n30-pro.dts"
-
-
-
-          if [ ! -f "$DTS" ]; then
-
-              echo "ERROR: N30 DTS missing"
-
-              exit 1
-
-          fi
-
-
-
-          echo "Checking USB VBUS"
-
-
-
-          grep -Fq \
-          "usb-vbus" \
-          "$DTS"
-
-
-
-          grep -Fq \
-          "GPIO_ACTIVE_HIGH" \
-          "$DTS"
-
-
-
-          grep -Fq \
-          "vbus-supply" \
-          "$DTS"
-
-
-
-          echo "N30 DTS verification passed"
-
-
-
-
-
-      - name: Verify generated firmware
-        shell: bash
-        working-directory: immortalwrt
-        run: |
-          set -e
-
 
           TARGET="bin/targets/mediatek/filogic"
 
 
-
-          echo "================================"
-          echo "Generated files"
-          echo "================================"
+          test -d "$TARGET"
 
 
-          find "$TARGET" \
-          -maxdepth 2 \
-          -type f \
-          -print \
-          | sort
-
-
-
-          echo
-
-          echo "Check forbidden N60"
-
-
-
-          if find "$TARGET" \
-          -type f \
-          -iname "*n60*" \
-          | grep -q .; then
-
-
-              echo "ERROR: N60 firmware detected"
-
-              exit 1
-
+          if grep -Rqi "h3c" "$TARGET"; then
+            echo "Wrong device: h3c detected"
+            exit 1
           fi
 
 
-
-          echo
-
-          echo "Check N30"
-
-
-
-          if ! find "$TARGET" \
-          -type f \
-          \( \
-          -iname "*n30*" \
-          -o \
-          -iname "*netcore*" \
-          \) \
-          | grep -q .; then
-
-
-              echo "ERROR: Netcore N30 firmware not found"
-
-              exit 1
-
+          if grep -Rqi "n60" "$TARGET"; then
+            echo "Wrong device: n60 detected"
+            exit 1
           fi
 
 
-
-          echo "Firmware verification passed"
-
-
-
+          grep -Rqi \
+          "netis_nx30v2" \
+          "$TARGET"
 
 
-      - name: Generate build report
-        shell: bash
-        working-directory: immortalwrt
+      - name: Save build information
         run: |
-          set -e
+
+          mkdir -p output
+
+          cp immortalwrt/.config \
+          output/config.buildinfo
 
 
-          REPORT="n30pro-build-report.txt"
-
-
-
-          {
-
-          echo "=========================================="
-
-          echo "ImmortalWrt 25.12.2"
-
-          echo "Netcore N30 Pro"
-
-          echo "=========================================="
-
-
-
-          echo
-
-          echo "Git version:"
-
-          git describe --tags --always
-
-
-
-          echo
-
-          echo "Commit:"
-
-          git rev-parse HEAD
-
-
-
-          echo
-
-          echo "Target:"
-
-          grep \
-          "CONFIG_TARGET_mediatek_filogic_DEVICE" \
-          .config || true
-
-
-
-          echo
-
-          echo "USB packages:"
-
-          grep \
-          "CONFIG_PACKAGE_kmod-usb" \
-          .config || true
-
-
-
-          echo
-
-          echo "XHCI modules:"
-
-          find build_dir \
-          -name "xhci*.ko" \
-          -print
-
-
-
-          echo
-
-          echo "Firmware:"
-
-          find bin/targets/mediatek/filogic \
-          -type f \
-          | grep -Ei "n30|netcore"
-
-
-
-          } > "$REPORT"
-
-
-
-          cat "$REPORT"
-
-
-
+          cp -a \
+          immortalwrt/bin/targets/mediatek/filogic/* \
+          output/
 
 
       - name: Upload firmware
@@ -672,12 +326,4 @@ jobs:
 
           name: ImmortalWrt-25.12.2-Netcore-N30-Pro
 
-          path: |
-
-            immortalwrt/bin/targets/mediatek/filogic/**
-
-            immortalwrt/n30pro-build-report.txt
-
-          if-no-files-found: error
-
-          retention-days: 7
+          path: output/
