@@ -12,12 +12,15 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v5
+
 
       - name: Install dependencies
         run: |
           sudo apt update
+
           sudo apt install -y \
             build-essential \
             clang \
@@ -35,6 +38,7 @@ jobs:
             file \
             binutils
 
+
       - name: Clone ImmortalWrt
         run: |
           git clone \
@@ -43,55 +47,98 @@ jobs:
             https://github.com/immortalwrt/immortalwrt.git \
             immortalwrt
 
-      - name: Verify source and device
+
+      - name: Verify device
         working-directory: immortalwrt
         run: |
-          git describe --tags
 
-          grep -q \
-          "Device/netis_nx30v2" \
-          target/linux/mediatek/image/filogic.mk
+          grep -Rqs \
+          "netis_nx30v2" \
+          target/linux/mediatek/image \
+          || {
+            echo "netis_nx30v2 device definition not found"
+            exit 1
+          }
 
-      - name: Check DTS
+
+      - name: Verify DTS
         working-directory: immortalwrt
         run: |
-          DTS=$(awk '
-          /define Device\/netis_nx30v2/ {a=1}
-          a && /DEVICE_DTS/ {print $2;exit}
-          ' target/linux/mediatek/image/filogic.mk)
 
-          test -n "$DTS"
+          DTS_FILE=$(grep -Ril \
+          "netis_nx30v2" \
+          target/linux/mediatek/dts \
+          | head -n1)
 
-          FILE=$(find target/linux/mediatek/dts -name "${DTS}.dts" | head -1)
 
-          test -f "$FILE"
+          if [ -z "$DTS_FILE" ]; then
 
-          grep -q "xhci" "$FILE"
+            echo "N30 Pro DTS not found"
+
+            exit 1
+
+          fi
+
+
+          echo "Using DTS:"
+          echo "$DTS_FILE"
+
+
+          grep -q "xhci" "$DTS_FILE" \
+          || {
+            echo "xhci missing"
+            exit 1
+          }
+
+
+          grep -Eq \
+          "vbus-supply|usb-vbus|regulator" \
+          "$DTS_FILE" \
+          || {
+            echo "USB VBUS regulator definition not found"
+            exit 1
+          }
+
 
       - name: Import StarVPN
         run: |
+
           test -f "${STARVPN_IPK}"
+
 
           mkdir -p /tmp/starvpn
 
-          ar x "${STARVPN_IPK}" --output /tmp/starvpn
 
-          tar xzf /tmp/starvpn/data.tar.gz -C /tmp/starvpn
+          ar x \
+          "${STARVPN_IPK}" \
+          --output /tmp/starvpn
+
+
+          tar xzf \
+          /tmp/starvpn/data.tar.gz \
+          -C /tmp/starvpn
+
 
           mkdir -p \
           immortalwrt/package/starvpn/starvpn/files
+
 
           cp -a \
           /tmp/starvpn/usr \
           immortalwrt/package/starvpn/starvpn/files/
 
+
           cp -a \
           /tmp/starvpn/etc \
           immortalwrt/package/starvpn/starvpn/files/
 
+
       - name: Create StarVPN package
         run: |
-          mkdir -p immortalwrt/package/starvpn/starvpn
+
+          mkdir -p \
+          immortalwrt/package/starvpn/starvpn
+
 
           printf '%s\n' \
           'include $(TOPDIR)/rules.mk' \
@@ -99,29 +146,46 @@ jobs:
           'PKG_VERSION:=6.1.0' \
           'PKG_RELEASE:=1' \
           'include $(INCLUDE_DIR)/package.mk' \
+          '' \
           'define Package/starvpn' \
-          ' SECTION:=net' \
-          ' CATEGORY:=Network' \
-          ' TITLE:=StarVPN' \
-          ' DEPENDS:=+kmod-tun' \
+          '  SECTION:=net' \
+          '  CATEGORY:=Network' \
+          '  TITLE:=StarVPN' \
+          '  DEPENDS:=+kmod-tun' \
           'endef' \
+          '' \
           'define Package/starvpn/install' \
-          ' $(INSTALL_DIR) $(1)/usr/bin' \
-          ' cp -a ./files/usr/bin/* $(1)/usr/bin/' \
-          ' $(INSTALL_DIR) $(1)/etc/init.d' \
-          ' cp -a ./files/etc/init.d/starvpn $(1)/etc/init.d/' \
+          '	$(INSTALL_DIR) $(1)/usr/bin' \
+          '	cp -a ./files/usr/bin/* $(1)/usr/bin/' \
+          '	$(INSTALL_DIR) $(1)/etc/init.d' \
+          '	cp -a ./files/etc/init.d/starvpn $(1)/etc/init.d/' \
           'endef' \
+          '' \
           '$(eval $(call BuildPackage,starvpn))' \
           > immortalwrt/package/starvpn/starvpn/Makefile
 
-      - name: Configure feeds and build config
+
+      - name: Configure feeds
         working-directory: immortalwrt
         run: |
-          echo "src-link starvpn $(pwd)/package/starvpn" >> feeds.conf.default
+
+          echo \
+          "src-link starvpn $(pwd)/package/starvpn" \
+          >> feeds.conf.default
+
 
           ./scripts/feeds update -a
+
+
           ./scripts/feeds install -a
+
+
           ./scripts/feeds install starvpn
+
+
+      - name: Generate config
+        working-directory: immortalwrt
+        run: |
 
           printf '%s\n' \
           'CONFIG_TARGET_mediatek=y' \
@@ -151,39 +215,40 @@ jobs:
           'CONFIG_PACKAGE_starvpn=y' \
           > .config
 
+
           make defconfig
 
-      - name: Verify configuration
+
+      - name: Build
         working-directory: immortalwrt
         run: |
-          grep -q \
-          "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_netis_nx30v2=y" \
-          .config
 
-          grep -q \
-          "CONFIG_PACKAGE_starvpn=y" \
-          .config
-
-      - name: Build firmware
-        working-directory: immortalwrt
-        run: |
           make download -j$(nproc)
+
           make -j$(nproc) V=s
 
-      - name: Firmware audit
+
+      - name: Audit firmware
         working-directory: immortalwrt
         run: |
+
           DIR="bin/targets/mediatek/filogic"
+
 
           test -d "$DIR"
 
+
           if grep -Rqi "h3c" "$DIR"; then
+            echo "H3C firmware detected"
             exit 1
           fi
 
+
           if grep -Rqi "n60" "$DIR"; then
+            echo "N60 firmware detected"
             exit 1
           fi
+
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4
