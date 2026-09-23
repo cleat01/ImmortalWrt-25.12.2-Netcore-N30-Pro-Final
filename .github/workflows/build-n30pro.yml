@@ -57,29 +57,31 @@ jobs:
       - name: Create StarVPN package
         run: |
           mkdir -p immortalwrt/package/starvpn/starvpn
-          cat > immortalwrt/package/starvpn/starvpn/Makefile <<'EOF'
-include $(TOPDIR)/rules.mk
-PKG_NAME:=starvpn
-PKG_VERSION:=6.1.0
-PKG_RELEASE:=1
-include $(INCLUDE_DIR)/package.mk
-
-define Package/starvpn
-  SECTION:=net
-  CATEGORY:=Network
-  TITLE:=StarVPN
-  DEPENDS:=+kmod-tun
-endef
-
-define Package/starvpn/install
-	$(INSTALL_DIR) $(1)/usr/bin
-	cp -a ./files/usr/bin/* $(1)/usr/bin/
-	$(INSTALL_DIR) $(1)/etc/init.d
-	cp -a ./files/etc/init.d/starvpn $(1)/etc/init.d/
-endef
-
-$(eval $(call BuildPackage,starvpn))
-EOF
+          printf '%s\n' \
+          'include $(TOPDIR)/rules.mk' \
+          '' \
+          'PKG_NAME:=starvpn' \
+          'PKG_VERSION:=6.1.0' \
+          'PKG_RELEASE:=1' \
+          '' \
+          'include $(INCLUDE_DIR)/package.mk' \
+          '' \
+          'define Package/starvpn' \
+          '  SECTION:=net' \
+          '  CATEGORY:=Network' \
+          '  TITLE:=StarVPN' \
+          '  DEPENDS:=+kmod-tun' \
+          'endef' \
+          '' \
+          'define Package/starvpn/install' \
+          '	$(INSTALL_DIR) $(1)/usr/bin' \
+          '	cp -a ./files/usr/bin/* $(1)/usr/bin/' \
+          '	$(INSTALL_DIR) $(1)/etc/init.d' \
+          '	cp -a ./files/etc/init.d/starvpn $(1)/etc/init.d/' \
+          'endef' \
+          '' \
+          '$(eval $(call BuildPackage,starvpn))' \
+          > immortalwrt/package/starvpn/starvpn/Makefile
 
       - name: Configure
         working-directory: immortalwrt
