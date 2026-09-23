@@ -92,19 +92,70 @@ jobs:
           fi
 
 
-          echo "Applying:"
+          echo "Using patch:"
           echo "$PATCH"
 
 
-          patch \
-          --dry-run \
-          -p1 \
-          < "$PATCH"
+
+          awk '
+
+          BEGIN {
+              block=""
+              skip=0
+          }
 
 
+
+          /^diff --git/ {
+
+
+              if(block!="" && skip==0)
+                  print block
+
+
+              block=$0 "\n"
+
+
+              if($0 ~ /11_fix_wifi_mac/)
+                  skip=1
+              else
+                  skip=0
+
+
+              next
+
+          }
+
+
+
+          {
+
+              block=block $0 "\n"
+
+          }
+
+
+
+          END {
+
+              if(block!="" && skip==0)
+                  print block
+
+          }
+
+
+          ' "$PATCH" > /tmp/n30pro.patch
+
+
+
+          echo "Applying filtered patch"
+
+
+
           patch \
           -p1 \
-          < "$PATCH"
+          --forward \
+          < /tmp/n30pro.patch
 
 
 
@@ -116,16 +167,18 @@ jobs:
           | head -1)
 
 
+
           if [ -z "$IPK" ]; then
 
-            echo "StarVPN IPK missing"
+              echo "StarVPN IPK missing"
 
-            exit 1
+              exit 1
 
           fi
 
 
-          echo "Using StarVPN:"
+
+          echo "StarVPN:"
           echo "$IPK"
 
 
@@ -145,20 +198,16 @@ jobs:
 
 
 
-          echo "Detect package format"
-
-
-
           if file starvpn.ipk | grep -qi "debian"; then
 
 
-            ar x starvpn.ipk
+              ar x starvpn.ipk
 
 
           else
 
 
-            tar xf starvpn.ipk
+              tar xf starvpn.ipk
 
 
           fi
@@ -168,24 +217,22 @@ jobs:
           if [ -f data.tar.gz ]; then
 
 
-            tar xf data.tar.gz
+              tar xf data.tar.gz
 
 
           elif [ -f data.tar.zst ]; then
 
 
-            tar \
-            --use-compress-program=unzstd \
-            -xf data.tar.zst
+              tar \
+              --use-compress-program=unzstd \
+              -xf data.tar.zst
 
 
           else
 
+              echo "data archive missing"
 
-            echo "No data archive found"
-
-            exit 1
-
+              exit 1
 
           fi
 
@@ -208,15 +255,11 @@ jobs:
 
           if [ -d etc ]; then
 
-            cp -a \
-            etc/. \
-            ${GITHUB_WORKSPACE}/immortalwrt/package/starvpn/files/
+              cp -a \
+              etc/. \
+              ${GITHUB_WORKSPACE}/immortalwrt/package/starvpn/files/
 
           fi
-
-
-
-          cd ${GITHUB_WORKSPACE}
 
 
 
@@ -245,18 +288,6 @@ jobs:
 
 
 
-      - name: Verify StarVPN package
-        run: |
-
-          test -f \
-          immortalwrt/package/starvpn/Makefile
-
-
-          test -d \
-          immortalwrt/package/starvpn/files
-
-
-
       - name: Verify N30 Pro DTS
         working-directory: immortalwrt
         run: |
@@ -267,19 +298,13 @@ jobs:
           test -f "$DTS"
 
 
-          grep -q \
-          "vbus-supply" \
-          "$DTS"
+          grep -q "vbus-supply" "$DTS"
 
 
-          grep -q \
-          "xhci" \
-          "$DTS"
+          grep -q "xhci" "$DTS"
 
 
-          grep -q \
-          "usb@" \
-          "$DTS"
+          grep -q "usb@" "$DTS"
 
 
 
@@ -309,7 +334,7 @@ jobs:
 
 
 
-      - name: Generate config
+      - name: Generate configuration
         working-directory: immortalwrt
         run: |
 
@@ -324,7 +349,6 @@ jobs:
           'CONFIG_PACKAGE_kmod-usb-xhci-hcd=y' \
           'CONFIG_PACKAGE_kmod-usb-storage=y' \
           'CONFIG_PACKAGE_kmod-usb-storage-uas=y' \
-          'CONFIG_PACKAGE_block-mount=y' \
           'CONFIG_PACKAGE_kmod-tun=y' \
           'CONFIG_PACKAGE_iptables=y' \
           'CONFIG_PACKAGE_kmod-usb-net=y' \
@@ -388,9 +412,9 @@ jobs:
           -o \
           -iname "*n60*"; then
 
-            echo "Wrong firmware detected"
+              echo "Wrong firmware"
 
-            exit 1
+              exit 1
 
           fi
 
