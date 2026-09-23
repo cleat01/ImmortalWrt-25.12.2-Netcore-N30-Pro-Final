@@ -92,63 +92,49 @@ jobs:
           fi
 
 
-          echo "Using patch:"
-          echo "$PATCH"
-
-
 
           awk '
 
           BEGIN {
-              block=""
-              skip=0
+            block=""
+            skip=0
           }
-
 
 
           /^diff --git/ {
 
-
-              if(block!="" && skip==0)
-                  print block
-
-
-              block=$0 "\n"
+            if(block!="" && skip==0)
+              print block
 
 
-              if($0 ~ /11_fix_wifi_mac/)
-                  skip=1
-              else
-                  skip=0
+            block=$0 "\n"
 
 
-              next
+            if($0 ~ /11_fix_wifi_mac/)
+              skip=1
+            else
+              skip=0
+
+
+            next
 
           }
-
 
 
           {
-
-              block=block $0 "\n"
-
+            block=block $0 "\n"
           }
-
 
 
           END {
 
-              if(block!="" && skip==0)
-                  print block
+            if(block!="" && skip==0)
+              print block
 
           }
 
 
           ' "$PATCH" > /tmp/n30pro.patch
-
-
-
-          echo "Applying filtered patch"
 
 
 
@@ -161,6 +147,13 @@ jobs:
 
       - name: Prepare StarVPN package
         run: |
+
+          set -e
+
+
+          cd ${GITHUB_WORKSPACE}
+
+
 
           IPK=$(find . \
           -name "starvpn*.ipk" \
@@ -185,6 +178,7 @@ jobs:
 
           rm -rf /tmp/starvpn
 
+
           mkdir -p /tmp/starvpn
 
 
@@ -200,15 +194,11 @@ jobs:
 
           if file starvpn.ipk | grep -qi "debian"; then
 
-
               ar x starvpn.ipk
-
 
           else
 
-
               tar xf starvpn.ipk
-
 
           fi
 
@@ -216,12 +206,10 @@ jobs:
 
           if [ -f data.tar.gz ]; then
 
-
               tar xf data.tar.gz
 
 
           elif [ -f data.tar.zst ]; then
-
 
               tar \
               --use-compress-program=unzstd \
@@ -230,7 +218,7 @@ jobs:
 
           else
 
-              echo "data archive missing"
+              echo "StarVPN data archive missing"
 
               exit 1
 
@@ -238,26 +226,40 @@ jobs:
 
 
 
-          test -d usr
+          cd ${GITHUB_WORKSPACE}
+
+
+
+          rm -rf immortalwrt/package/starvpn
 
 
 
           mkdir -p \
-          ${GITHUB_WORKSPACE}/immortalwrt/package/starvpn/files
+          immortalwrt/package/starvpn/files
+
+
+
+          if [ ! -d /tmp/starvpn/usr ]; then
+
+              echo "StarVPN usr missing"
+
+              exit 1
+
+          fi
 
 
 
           cp -a \
-          usr/. \
-          ${GITHUB_WORKSPACE}/immortalwrt/package/starvpn/files/
+          /tmp/starvpn/usr/. \
+          immortalwrt/package/starvpn/files/
 
 
 
-          if [ -d etc ]; then
+          if [ -d /tmp/starvpn/etc ]; then
 
               cp -a \
-              etc/. \
-              ${GITHUB_WORKSPACE}/immortalwrt/package/starvpn/files/
+              /tmp/starvpn/etc/. \
+              immortalwrt/package/starvpn/files/
 
           fi
 
@@ -288,6 +290,18 @@ jobs:
 
 
 
+      - name: Verify StarVPN package
+        run: |
+
+          test -f \
+          immortalwrt/package/starvpn/Makefile
+
+
+          test -d \
+          immortalwrt/package/starvpn/files
+
+
+
       - name: Verify N30 Pro DTS
         working-directory: immortalwrt
         run: |
@@ -295,16 +309,26 @@ jobs:
           DTS="target/linux/mediatek/dts/mt7981b-netcore-n30-pro.dts"
 
 
+
           test -f "$DTS"
 
 
-          grep -q "vbus-supply" "$DTS"
+
+          grep -q \
+          "vbus-supply" \
+          "$DTS"
 
 
-          grep -q "xhci" "$DTS"
+
+          grep -q \
+          "xhci" \
+          "$DTS"
 
 
-          grep -q "usb@" "$DTS"
+
+          grep -q \
+          "usb@" \
+          "$DTS"
 
 
 
@@ -327,7 +351,9 @@ jobs:
           >> feeds.conf.default
 
 
+
           ./scripts/feeds update -a
+
 
 
           ./scripts/feeds install -a
@@ -369,6 +395,7 @@ jobs:
           > .config
 
 
+
           make defconfig
 
 
@@ -399,7 +426,9 @@ jobs:
           TARGET="bin/targets/mediatek/filogic"
 
 
+
           test -d "$TARGET"
+
 
 
           find "$TARGET" \
@@ -407,12 +436,13 @@ jobs:
           | grep -q .
 
 
+
           if find "$TARGET" \
           -iname "*h3c*" \
           -o \
           -iname "*n60*"; then
 
-              echo "Wrong firmware"
+              echo "Wrong firmware detected"
 
               exit 1
 
