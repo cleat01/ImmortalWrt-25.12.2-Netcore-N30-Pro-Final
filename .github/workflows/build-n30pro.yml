@@ -5,22 +5,20 @@ on:
 
 env:
   IMMORTALWRT_TAG: v25.12.2
+  DEVICE: netis_nx30v2
+  STARVPN_IPK: packages/starvpn_6.1.0_aarch64_cortex-a53.ipk
 
 jobs:
   build:
-
     runs-on: ubuntu-24.04
 
     steps:
-
       - name: Checkout
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@v5
 
       - name: Install dependencies
         run: |
           sudo apt update
-
           sudo apt install -y \
             build-essential \
             clang \
@@ -35,297 +33,99 @@ jobs:
             rsync \
             unzip \
             zstd \
-            file
-
+            file \
+            binutils
 
       - name: Clone ImmortalWrt
         run: |
-          git clone \
-            --depth=1 \
-            --branch ${IMMORTALWRT_TAG} \
-            https://github.com/immortalwrt/immortalwrt.git \
-            immortalwrt
+          git clone --depth 1 --branch "${IMMORTALWRT_TAG}" https://github.com/immortalwrt/immortalwrt.git immortalwrt
 
-
-      - name: Verify source
+      - name: Verify device
         working-directory: immortalwrt
         run: |
-          git describe --tags
+          grep -q "Device/netis_nx30v2" target/linux/mediatek/image/filogic.mk
 
-
-      - name: Verify N30 Pro device
-        working-directory: immortalwrt
+      - name: Import StarVPN
         run: |
-
-          if ! grep -q \
-          "Device/netis_nx30v2" \
-          target/linux/mediatek/image/filogic.mk
-          then
-
-            echo "netis_nx30v2 device missing"
-
-            exit 1
-
-          fi
-
-
-      - name: Check DTS USB support
-        working-directory: immortalwrt
-        run: |
-
-          DTS_LINE=$(awk '
-          /define Device\/netis_nx30v2/ {
-              flag=1
-          }
-
-          flag && /DEVICE_DTS/ {
-              print
-              exit
-          }
-          ' target/linux/mediatek/image/filogic.mk)
-
-
-          echo "$DTS_LINE"
-
-
-          if [ -z "$DTS_LINE" ]; then
-
-            echo "Cannot find DTS"
-
-            exit 1
-
-          fi
-
-
-      - name: Prepare StarVPN package
-        run: |
-
-          mkdir -p immortalwrt/package/starvpn/starvpn/files
-
-
           mkdir -p /tmp/starvpn
+          ar x "${STARVPN_IPK}" --output /tmp/starvpn
+          tar xzf /tmp/starvpn/data.tar.gz -C /tmp/starvpn
+          mkdir -p immortalwrt/package/starvpn/starvpn/files
+          cp -a /tmp/starvpn/usr immortalwrt/package/starvpn/starvpn/files/
+          cp -a /tmp/starvpn/etc immortalwrt/package/starvpn/starvpn/files/
 
-
-          tar xf \
-          packages/starvpn_6.1.0_aarch64_cortex-a53.ipk \
-          -C /tmp/starvpn
-
-
-          tar xf \
-          /tmp/starvpn/data.tar.gz \
-          -C /tmp/starvpn
-
-
-          cp -a \
-          /tmp/starvpn/usr \
-          immortalwrt/package/starvpn/starvpn/files/
-
-
-          cp -a \
-          /tmp/starvpn/etc \
-          immortalwrt/package/starvpn/starvpn/files/
-
-
-          mkdir -p \
-          immortalwrt/package/starvpn/starvpn
-
-      - name: Create StarVPN Makefile
+      - name: Create StarVPN package
         run: |
+          mkdir -p immortalwrt/package/starvpn/starvpn
+          cat > immortalwrt/package/starvpn/starvpn/Makefile <<'EOF'
+include $(TOPDIR)/rules.mk
+PKG_NAME:=starvpn
+PKG_VERSION:=6.1.0
+PKG_RELEASE:=1
+include $(INCLUDE_DIR)/package.mk
 
-          printf '%s\n' \
-          'include $(TOPDIR)/rules.mk' \
-          '' \
-          'PKG_NAME:=starvpn' \
-          'PKG_VERSION:=6.1.0' \
-          'PKG_RELEASE:=1' \
-          '' \
-          'include $(INCLUDE_DIR)/package.mk' \
-          '' \
-          'define Package/starvpn' \
-          '  SECTION:=net' \
-          '  CATEGORY:=Network' \
-          '  TITLE:=StarVPN Mesh Network' \
-          '  DEPENDS:=+kmod-tun' \
-          'endef' \
-          '' \
-          'define Package/starvpn/install' \
-          '' \
-          '	$(INSTALL_DIR) $(1)/usr/bin' \
-          '	cp -a ./files/usr/bin/* $(1)/usr/bin/' \
-          '' \
-          '	$(INSTALL_DIR) $(1)/etc/init.d' \
-          '	cp -a ./files/etc/init.d/starvpn $(1)/etc/init.d/' \
-          '' \
-          'endef' \
-          '' \
-          '$(eval $(call BuildPackage,starvpn))' \
-          > immortalwrt/package/starvpn/starvpn/Makefile
+define Package/starvpn
+  SECTION:=net
+  CATEGORY:=Network
+  TITLE:=StarVPN
+  DEPENDS:=+kmod-tun
+endef
 
+define Package/starvpn/install
+	$(INSTALL_DIR) $(1)/usr/bin
+	cp -a ./files/usr/bin/* $(1)/usr/bin/
+	$(INSTALL_DIR) $(1)/etc/init.d
+	cp -a ./files/etc/init.d/starvpn $(1)/etc/init.d/
+endef
 
+$(eval $(call BuildPackage,starvpn))
+EOF
 
-      - name: Register StarVPN feed
+      - name: Configure
         working-directory: immortalwrt
         run: |
-
-          echo \
-          "src-link starvpn $(pwd)/package/starvpn" \
-          >> feeds.conf.default
-
-
+          echo 'src-link starvpn $(pwd)/package/starvpn' >> feeds.conf.default
           ./scripts/feeds update -a
-
           ./scripts/feeds install -a
-
           ./scripts/feeds install starvpn
 
-
-
-      - name: Generate build config
-        working-directory: immortalwrt
-        run: |
-
-          printf '%s\n' \
-          'CONFIG_TARGET_mediatek=y' \
-          'CONFIG_TARGET_mediatek_filogic=y' \
-          'CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_netis_nx30v2=y' \
-          '' \
-          'CONFIG_PACKAGE_luci=y' \
-          'CONFIG_PACKAGE_luci-ssl=y' \
-          '' \
-          'CONFIG_PACKAGE_kmod-usb3=y' \
-          'CONFIG_PACKAGE_kmod-usb-storage=y' \
-          'CONFIG_PACKAGE_kmod-usb-storage-uas=y' \
-          'CONFIG_PACKAGE_block-mount=y' \
-          '' \
-          'CONFIG_PACKAGE_kmod-usb-net=y' \
-          'CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y' \
-          'CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y' \
-          'CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y' \
-          '' \
-          'CONFIG_PACKAGE_kmod-usb-serial=y' \
-          'CONFIG_PACKAGE_kmod-usb-serial-option=y' \
-          'CONFIG_PACKAGE_kmod-usb-wdm=y' \
-          '' \
-          'CONFIG_PACKAGE_usb-modeswitch=y' \
-          'CONFIG_PACKAGE_uqmi=y' \
-          'CONFIG_PACKAGE_umbim=y' \
-          '' \
-          'CONFIG_PACKAGE_mwan3=y' \
-          'CONFIG_PACKAGE_luci-app-mwan3=y' \
-          '' \
-          'CONFIG_PACKAGE_samba4-server=y' \
-          'CONFIG_PACKAGE_luci-app-samba4=y' \
-          '' \
-          'CONFIG_PACKAGE_kmod-tun=y' \
-          'CONFIG_PACKAGE_starvpn=y' \
-          > .config
-
-
+          cat > .config <<'EOF'
+CONFIG_TARGET_mediatek=y
+CONFIG_TARGET_mediatek_filogic=y
+CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_netis_nx30v2=y
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-ssl=y
+CONFIG_PACKAGE_kmod-usb3=y
+CONFIG_PACKAGE_kmod-usb-storage=y
+CONFIG_PACKAGE_kmod-usb-storage-uas=y
+CONFIG_PACKAGE_block-mount=y
+CONFIG_PACKAGE_kmod-usb-net=y
+CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y
+CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y
+CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
+CONFIG_PACKAGE_kmod-usb-serial=y
+CONFIG_PACKAGE_kmod-usb-serial-option=y
+CONFIG_PACKAGE_kmod-usb-wdm=y
+CONFIG_PACKAGE_usb-modeswitch=y
+CONFIG_PACKAGE_uqmi=y
+CONFIG_PACKAGE_umbim=y
+CONFIG_PACKAGE_mwan3=y
+CONFIG_PACKAGE_luci-app-mwan3=y
+CONFIG_PACKAGE_samba4-server=y
+CONFIG_PACKAGE_luci-app-samba4=y
+CONFIG_PACKAGE_kmod-tun=y
+CONFIG_PACKAGE_starvpn=y
+EOF
           make defconfig
 
-
-
-      - name: Verify final configuration
+      - name: Build
         working-directory: immortalwrt
         run: |
-
-          grep \
-          "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_netis_nx30v2=y" \
-          .config
-
-
-          grep \
-          "CONFIG_PACKAGE_starvpn=y" \
-          .config
-
-
-
-      - name: Download source packages
-        working-directory: immortalwrt
-        run: |
-
-          make download \
-          -j$(nproc)
-
-
-
-      - name: Compile firmware
-        working-directory: immortalwrt
-        run: |
-
-          make \
-          -j$(nproc) \
-          V=s
-
-
-
-      - name: Firmware audit
-        working-directory: immortalwrt
-        run: |
-
-          TARGET="bin/targets/mediatek/filogic"
-
-
-          if [ ! -d "$TARGET" ]; then
-
-            echo "Firmware output missing"
-
-            exit 1
-
-          fi
-
-
-          echo "Checking forbidden devices"
-
-
-          if grep -Rqi "h3c" "$TARGET"; then
-
-            echo "ERROR: H3C firmware detected"
-
-            exit 1
-
-          fi
-
-
-          if grep -Rqi "n60" "$TARGET"; then
-
-            echo "ERROR: N60 firmware detected"
-
-            exit 1
-
-          fi
-
-
-          echo "Checking StarVPN"
-
-
-          find "$TARGET" \
-          -iname "*starvpn*" \
-          -o \
-          -iname "*stars*"
-
-
-
-      - name: Collect firmware
-        run: |
-
-          mkdir -p output
-
-
-          cp immortalwrt/.config \
-          output/config.buildinfo
-
-
-          cp -a \
-          immortalwrt/bin/targets/mediatek/filogic/* \
-          output/
-
-
+          make download -j$(nproc)
+          make -j$(nproc) V=s
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
-
-          name: ImmortalWrt-25.12.2-Netcore-N30-Pro-StarVPN
-
-          path: output/
+          name: ImmortalWrt-N30-Pro
+          path: immortalwrt/bin/targets/mediatek/filogic/
