@@ -1,8 +1,7 @@
-name: Build ImmortalWrt 25.12.2 Netcore N30 Pro Final
+name: Build ImmortalWrt 25.12.2 Netcore N30 Pro
 
 on:
   workflow_dispatch:
-
 
 env:
   IMMORTALWRT_TAG: v25.12.2
@@ -18,15 +17,12 @@ jobs:
 
     steps:
 
-
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v5
-
 
 
       - name: Install dependencies
         run: |
-
           sudo apt update
 
           sudo apt install -y \
@@ -48,7 +44,6 @@ jobs:
             binutils
 
 
-
       - name: Clone ImmortalWrt
         run: |
 
@@ -60,7 +55,7 @@ jobs:
 
 
 
-      - name: Clone N30 Pro patch
+      - name: Clone N30 patch
         run: |
 
           git clone \
@@ -70,7 +65,7 @@ jobs:
 
 
 
-      - name: Apply N30 Pro patch
+      - name: Apply N30 patch
         working-directory: immortalwrt
         run: |
 
@@ -79,73 +74,60 @@ jobs:
 
           PATCH=$(find ../n30pro-patch \
           -name "*.patch" \
-          | sort \
           | head -1)
-
-
-          if [ -z "$PATCH" ]; then
-
-              echo "N30 patch missing"
-
-              exit 1
-
-          fi
-
 
 
           awk '
 
-          BEGIN {
-              block=""
-              skip=0
+          BEGIN{
+          block=""
+          skip=0
           }
 
 
-          /^diff --git/ {
+          /^diff --git/{
 
-              if(block!="" && skip==0)
-                  print block
-
-
-              block=$0 "\n"
+          if(block!="" && skip==0)
+          print block
 
 
-              if($0 ~ /11_fix_wifi_mac/)
-                  skip=1
-              else
-                  skip=0
+          block=$0"\n"
 
 
-              next
+          if($0 ~ /11_fix_wifi_mac/)
+          skip=1
+          else
+          skip=0
+
+
+          next
 
           }
 
 
           {
-              block=block $0 "\n"
+          block=block $0 "\n"
           }
 
 
-          END {
+          END{
 
-              if(block!="" && skip==0)
-                  print block
+          if(block!="" && skip==0)
+          print block
 
           }
 
-
-          ' "$PATCH" > /tmp/n30pro.patch
-
+          ' "$PATCH" > /tmp/n30.patch
 
 
           patch \
           -p1 \
           --forward \
-          < /tmp/n30pro.patch
+          < /tmp/n30.patch
 
 
 
-      - name: Prepare StarVPN package
+      - name: Prepare StarVPN
         run: |
 
           set -e
@@ -156,20 +138,7 @@ jobs:
           | head -1)
 
 
-
-          if [ -z "$IPK" ]; then
-
-              echo "StarVPN IPK missing"
-
-              exit 1
-
-          fi
-
-
-
-          echo "Using StarVPN:"
-          echo "$IPK"
-
+          test -n "$IPK"
 
 
           rm -rf /tmp/starvpn
@@ -177,80 +146,47 @@ jobs:
           mkdir -p /tmp/starvpn
 
 
-
           cp "$IPK" \
           /tmp/starvpn/starvpn.ipk
-
 
 
           cd /tmp/starvpn
 
 
+          if file starvpn.ipk | grep -qi debian
+          then
 
-          if file starvpn.ipk | grep -qi "debian"; then
-
-              ar x starvpn.ipk
+            ar x starvpn.ipk
 
           else
 
-              tar xf starvpn.ipk
+            tar xf starvpn.ipk
 
           fi
 
 
-
-          if [ -f data.tar.gz ]; then
-
-              tar xf data.tar.gz
-
-
-          elif [ -f data.tar.zst ]; then
-
-              tar \
-              --use-compress-program=unzstd \
-              -xf data.tar.zst
-
-
-          else
-
-              echo "StarVPN data archive missing"
-
-              exit 1
-
-          fi
-
+          tar xf data.tar.gz
 
 
           cd ${GITHUB_WORKSPACE}
 
 
-
-          rm -rf immortalwrt/package/starvpn
-
-
-          mkdir -p \
-          immortalwrt/package/starvpn/files
-
-
-
-          test -d /tmp/starvpn/usr
-
+          mkdir -p immortalwrt/package/starvpn/files
 
 
           cp -a \
-          /tmp/starvpn/usr/. \
+          /tmp/starvpn/usr \
           immortalwrt/package/starvpn/files/
 
 
+          if [ -d /tmp/starvpn/etc ]
+          then
 
-          if [ -d /tmp/starvpn/etc ]; then
-
-              cp -a \
-              /tmp/starvpn/etc/. \
-              immortalwrt/package/starvpn/files/
+          cp -a \
+          /tmp/starvpn/etc \
+          immortalwrt/package/starvpn/files/
 
           fi
-
 
 
           printf '%s\n' \
@@ -266,7 +202,7 @@ jobs:
           ' SECTION:=net' \
           ' CATEGORY:=Network' \
           ' TITLE:=StarVPN' \
-          ' DEPENDS:=+kmod-tun +iptables-nft' \
+          ' DEPENDS:=+kmod-tun' \
           'endef' \
           '' \
           'define Package/starvpn/install' \
@@ -278,40 +214,20 @@ jobs:
 
 
 
-      - name: Verify StarVPN package
-        run: |
-
-          test -f \
-          immortalwrt/package/starvpn/Makefile
-
-
-          test -d \
-          immortalwrt/package/starvpn/files
-
-
-
-      - name: Verify N30 Pro DTS
+      - name: Verify DTS
         working-directory: immortalwrt
         run: |
 
           DTS="target/linux/mediatek/dts/mt7981b-netcore-n30-pro.dts"
 
 
-
           test -f "$DTS"
 
 
-
-          grep -q \
-          "vbus-supply" \
-          "$DTS"
+          grep -q "vbus-supply" "$DTS"
 
 
-
-          grep -q \
-          "xhci" \
-          "$DTS"
-
+          grep -q "xhci" "$DTS"
 
 
           grep -Eq \
@@ -320,7 +236,7 @@ jobs:
 
 
 
-      - name: Verify target
+      - name: Verify device
         working-directory: immortalwrt
         run: |
 
@@ -330,14 +246,13 @@ jobs:
 
 
 
-      - name: Update feeds
+      - name: Feeds
         working-directory: immortalwrt
         run: |
 
           echo \
           "src-link starvpn $(pwd)/package/starvpn" \
           >> feeds.conf.default
-
 
 
           ./scripts/feeds update -a
@@ -347,257 +262,38 @@ jobs:
 
 
 
-      - name: Generate configuration
+      - name: Config
         working-directory: immortalwrt
         run: |
 
-          cat > .config <<'CONFIG'
-CONFIG_TARGET_mediatek=y
-CONFIG_TARGET_mediatek_filogic=y
-CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_netis_nx30v2=y
-
-CONFIG_PACKAGE_luci=y
-CONFIG_PACKAGE_luci-ssl=y
-
-CONFIG_PACKAGE_kmod-usb2=y
-CONFIG_PACKAGE_kmod-usb3=y
-CONFIG_PACKAGE_kmod-usb-xhci-hcd=y
-CONFIG_PACKAGE_kmod-usb-storage=y
-CONFIG_PACKAGE_kmod-usb-storage-uas=y
-
-CONFIG_PACKAGE_kmod-tun=y
-CONFIG_PACKAGE_iptables-nft=y
-
-CONFIG_PACKAGE_kmod-usb-net=y
-CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y
-CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y
-CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
-
-CONFIG_PACKAGE_kmod-usb-serial=y
-CONFIG_PACKAGE_kmod-usb-serial-option=y
-CONFIG_PACKAGE_kmod-usb-wdm=y
-
-CONFIG_PACKAGE_usb-modeswitch=y
-CONFIG_PACKAGE_uqmi=y
-CONFIG_PACKAGE_umbim=y
-
-CONFIG_PACKAGE_mwan3=y
-CONFIG_PACKAGE_luci-app-mwan3=y
-
-CONFIG_PACKAGE_samba4-server=y
-CONFIG_PACKAGE_luci-app-samba4=y
-
-CONFIG_PACKAGE_starvpn=y
-CONFIG_PACKAGE_iptables-nft=y
-CONFIG_PACKAGE_iptables-mod-tproxy=y
-CONFIG_PACKAGE_iptables-mod-extra=y
-CONFIG_PACKAGE_iptables-mod-conntrack-extra=y
-CONFIG_PACKAGE_iptables-mod-ipopt=y
-CONFIG_PACKAGE_iptables-mod-nat-extra=y
-CONFIG_PACKAGE_iptables-mod-filter=y
-CONFIG_PACKAGE_iptables-mod-iprange=y
-CONFIG_PACKAGE_iptables-mod-hashlimit=y
-CONFIG_PACKAGE_iptables-mod-led=y
-CONFIG_PACKAGE_iptables-mod-tproxy=y
-CONFIG_PACKAGE_iptables-mod-socket=y
-CONFIG_PACKAGE_iptables-mod-conntrack=y
-CONFIG_PACKAGE_iptables-mod-conntrack-extra=y
-CONFIG_PACKAGE_iptables-mod-extra=y
-CONFIG_PACKAGE_iptables-mod-ipsec=y
-CONFIG_PACKAGE_iptables-mod-ipv4options=y
-CONFIG_PACKAGE_iptables-mod-rpfilter=y
-CONFIG_PACKAGE_iptables-mod-tee=y
-CONFIG_PACKAGE_iptables-mod-u32=y
-CONFIG_PACKAGE_iptables-mod-webstr=y
-CONFIG_PACKAGE_iptables-mod-physdev=y
-CONFIG_PACKAGE_iptables-mod-quota=y
-CONFIG_PACKAGE_iptables-mod-time=y
-CONFIG_PACKAGE_iptables-mod-multiport=y
-CONFIG_PACKAGE_iptables-mod-icmp=y
-CONFIG_PACKAGE_iptables-mod-comment=y
-CONFIG_PACKAGE_iptables-mod-log=y
-CONFIG_PACKAGE_iptables-mod-ttl=y
-CONFIG_PACKAGE_iptables-mod-state=y
-CONFIG_PACKAGE_iptables-mod-mark=y
-CONFIG_PACKAGE_iptables-mod-set=y
-CONFIG_PACKAGE_iptables-mod-ipset=y
-CONFIG_PACKAGE_ipset=y
-CONFIG_PACKAGE_ipset-dns=y
-CONFIG_PACKAGE_iptables-nft-zz-legacy=y
-CONFIG_PACKAGE_iptables-zz-legacy=y
-CONFIG_PACKAGE_nftables=y
-CONFIG_PACKAGE_nftables-json=y
-CONFIG_PACKAGE_kmod-nft-core=y
-CONFIG_PACKAGE_kmod-nft-nat=y
-CONFIG_PACKAGE_kmod-nft-offload=y
-CONFIG_PACKAGE_kmod-nft-arp=y
-CONFIG_PACKAGE_kmod-nft-bridge=y
-CONFIG_PACKAGE_kmod-nft-fib=y
-CONFIG_PACKAGE_kmod-nft-netdev=y
-CONFIG_PACKAGE_kmod-nft-socket=y
-CONFIG_PACKAGE_kmod-nft-tproxy=y
-CONFIG_PACKAGE_kmod-nft-tproxy=y
-CONFIG_PACKAGE_kmod-nf-conntrack=y
-CONFIG_PACKAGE_kmod-nf-ipt=y
-CONFIG_PACKAGE_kmod-nf-ipvs=y
-CONFIG_PACKAGE_kmod-nf-nat=y
-CONFIG_PACKAGE_kmod-nf-nathelper=y
-CONFIG_PACKAGE_kmod-nf-nathelper-extra=y
-CONFIG_PACKAGE_kmod-nf-reject=y
-CONFIG_PACKAGE_kmod-nf-log=y
-CONFIG_PACKAGE_kmod-nf-log6=y
-CONFIG_PACKAGE_kmod-nfnetlink=y
-CONFIG_PACKAGE_kmod-nfnetlink-log=y
-CONFIG_PACKAGE_kmod-nfnetlink-queue=y
-CONFIG_PACKAGE_kmod-ipt-core=y
-CONFIG_PACKAGE_kmod-ipt-conntrack=y
-CONFIG_PACKAGE_kmod-ipt-nat=y
-CONFIG_PACKAGE_kmod-ipt-nat-extra=y
-CONFIG_PACKAGE_kmod-ipt-filter=y
-CONFIG_PACKAGE_kmod-ipt-ipset=y
-CONFIG_PACKAGE_kmod-ipt-ipopt=y
-CONFIG_PACKAGE_kmod-ipt-iprange=y
-CONFIG_PACKAGE_kmod-ipt-extra=y
-CONFIG_PACKAGE_kmod-ipt-raw=y
-CONFIG_PACKAGE_kmod-iptunnel=y
-CONFIG_PACKAGE_kmod-iptunnel4=y
-CONFIG_PACKAGE_kmod-iptunnel6=y
-CONFIG_PACKAGE_kmod-tproxy=y
-CONFIG_PACKAGE_kmod-sched-core=y
-CONFIG_PACKAGE_kmod-sched=y
-CONFIG_PACKAGE_kmod-sit=y
-CONFIG_PACKAGE_kmod-gre=y
-CONFIG_PACKAGE_kmod-gre6=y
-CONFIG_PACKAGE_kmod-veth=y
-CONFIG_PACKAGE_kmod-br-netfilter=y
-CONFIG_PACKAGE_kmod-crypto-user=y
-CONFIG_PACKAGE_kmod-crypto-hash=y
-CONFIG_PACKAGE_kmod-crypto-hmac=y
-CONFIG_PACKAGE_kmod-crypto-sha256=y
-CONFIG_PACKAGE_kmod-crypto-aead=y
-CONFIG_PACKAGE_kmod-crypto-ecb=y
-CONFIG_PACKAGE_kmod-crypto-cbc=y
-CONFIG_PACKAGE_kmod-crypto-ctr=y
-CONFIG_PACKAGE_kmod-crypto-des=y
-CONFIG_PACKAGE_kmod-crypto-md5=y
-CONFIG_PACKAGE_kmod-crypto-rng=y
-CONFIG_PACKAGE_kmod-crypto-manager=y
-CONFIG_PACKAGE_kmod-crypto-null=y
-CONFIG_PACKAGE_kmod-crypto-authenc=y
-CONFIG_PACKAGE_kmod-crypto-arc4=y
-CONFIG_PACKAGE_kmod-crypto-ccm=y
-CONFIG_PACKAGE_kmod-crypto-gcm=y
-CONFIG_PACKAGE_kmod-crypto-ghash=y
-CONFIG_PACKAGE_kmod-crypto-kpp=y
-CONFIG_PACKAGE_kmod-crypto-curve25519=y
-CONFIG_PACKAGE_kmod-crypto-lib-chacha20=y
-CONFIG_PACKAGE_kmod-crypto-lib-poly1305=y
-CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=y
-CONFIG_PACKAGE_kmod-crypto-lib-blake2s=y
-CONFIG_PACKAGE_kmod-crypto-lib-curve25519=y
-CONFIG_PACKAGE_kmod-crypto-lib-poly1305=y
-CONFIG_PACKAGE_kmod-crypto-lib-chacha20=y
-CONFIG_PACKAGE_kmod-crypto-lib-curve25519=y
-CONFIG_PACKAGE_kmod-crypto-lib-crc32c=y
-CONFIG_PACKAGE_kmod-crypto-lib-sha1=y
-CONFIG_PACKAGE_kmod-crypto-lib-sha256=y
-CONFIG_PACKAGE_kmod-crypto-lib-sha512=y
-CONFIG_PACKAGE_kmod-crypto-lib-des=y
-CONFIG_PACKAGE_kmod-crypto-lib-aes=y
-CONFIG_PACKAGE_kmod-crypto-lib-arc4=y
-CONFIG_PACKAGE_kmod-crypto-lib-md5=y
-CONFIG_PACKAGE_kmod-crypto-lib-rsa=y
-CONFIG_PACKAGE_kmod-crypto-lib-blowfish=y
-CONFIG_PACKAGE_kmod-crypto-lib-twofish=y
-CONFIG_PACKAGE_kmod-crypto-lib-serpent=y
-CONFIG_PACKAGE_kmod-crypto-lib-cast5=y
-CONFIG_PACKAGE_kmod-crypto-lib-camellia=y
-CONFIG_PACKAGE_kmod-crypto-lib-compress=y
-CONFIG_PACKAGE_kmod-crypto-lib-zlib=y
-CONFIG_PACKAGE_kmod-crypto-lib-lzo=y
-CONFIG_PACKAGE_kmod-crypto-lib-lz4=y
-CONFIG_PACKAGE_kmod-crypto-lib-zstd=y
-CONFIG_PACKAGE_kmod-crypto-lib-xxhash=y
-CONFIG_PACKAGE_kmod-crypto-lib-crc32=y
-CONFIG_PACKAGE_kmod-crypto-lib-crc16=y
-CONFIG_PACKAGE_kmod-crypto-lib-crc64=y
-CONFIG_PACKAGE_kmod-crypto-lib-curve25519=y
-CONFIG_PACKAGE_kmod-crypto-lib-poly1305=y
-CONFIG_PACKAGE_kmod-crypto-lib-chacha20=y
-CONFIG_PACKAGE_kmod-crypto-lib-blake2s=y
-CONFIG_PACKAGE_kmod-crypto-lib-essiv=y
-CONFIG_PACKAGE_kmod-crypto-lib-siphash=y
-CONFIG_PACKAGE_kmod-crypto-lib-rng=y
-CONFIG_PACKAGE_kmod-crypto-lib-ansi-cprng=y
-CONFIG_PACKAGE_kmod-crypto-lib-jitterentropy=y
-CONFIG_PACKAGE_kmod-crypto-lib-drbg=y
-CONFIG_PACKAGE_kmod-crypto-lib-hmac=y
-CONFIG_PACKAGE_kmod-crypto-lib-kpp=y
-CONFIG_PACKAGE_kmod-crypto-lib-acompress=y
-CONFIG_PACKAGE_kmod-crypto-lib-gcm=y
-CONFIG_PACKAGE_kmod-crypto-lib-ccm=y
-CONFIG_PACKAGE_kmod-crypto-lib-ctr=y
-CONFIG_PACKAGE_kmod-crypto-lib-cmac=y
-CONFIG_PACKAGE_kmod-crypto-lib-xcbc=y
-CONFIG_PACKAGE_kmod-crypto-lib-ecb=y
-CONFIG_PACKAGE_kmod-crypto-lib-xts=y
-CONFIG_PACKAGE_kmod-crypto-lib-cts=y
-CONFIG_PACKAGE_kmod-crypto-lib-authenc=y
-CONFIG_PACKAGE_kmod-crypto-lib-krng=y
-CONFIG_PACKAGE_kmod-crypto-lib-rsa=y
-CONFIG_PACKAGE_kmod-crypto-lib-asymmetric_keys=y
-CONFIG_PACKAGE_kmod-crypto-lib-public_key=y
-CONFIG_PACKAGE_kmod-crypto-lib-x509=y
-CONFIG_PACKAGE_kmod-crypto-lib-pkcs7=y
-CONFIG_PACKAGE_kmod-crypto-lib-pkcs8=y
-CONFIG_PACKAGE_kmod-crypto-lib-user=y
-CONFIG_PACKAGE_kmod-crypto-lib-manager=y
-CONFIG_PACKAGE_kmod-crypto-lib-null=y
-CONFIG_PACKAGE_kmod-crypto-lib-testmgr=y
-CONFIG_PACKAGE_kmod-crypto-lib-cryptd=y
-CONFIG_PACKAGE_kmod-crypto-lib-authenc=y
-CONFIG_PACKAGE_kmod-crypto-lib-seqiv=y
-CONFIG_PACKAGE_kmod-crypto-lib-cts=y
-CONFIG_PACKAGE_kmod-crypto-lib-fcrypt=y
-CONFIG_PACKAGE_kmod-crypto-lib-adiantum=y
-CONFIG_PACKAGE_kmod-crypto-lib-simd=y
-CONFIG_PACKAGE_kmod-crypto-lib-neon=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-aes=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-sha1=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-sha2=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-sha512=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-ghash=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-crc32=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-sm3=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-sm4=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-poly1305=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-chacha20=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-blake2s=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-curve25519=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-zinc=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-zstd=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-lz4=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-lzo=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-zlib=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-crc16=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-crc32c=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-crc32=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-xxhash=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-poly1305-neon=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-chacha20-neon=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-ghash-neon=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-aes-neon=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-sha256-neon=y
-CONFIG_PACKAGE_kmod-crypto-lib-arm64-sha512-neon=y
-EOF
+          printf '%s\n' \
+          'CONFIG_TARGET_mediatek=y' \
+          'CONFIG_TARGET_mediatek_filogic=y' \
+          'CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_netis_nx30v2=y' \
+          'CONFIG_PACKAGE_luci=y' \
+          'CONFIG_PACKAGE_luci-ssl=y' \
+          'CONFIG_PACKAGE_kmod-usb3=y' \
+          'CONFIG_PACKAGE_kmod-usb-storage=y' \
+          'CONFIG_PACKAGE_kmod-usb-storage-uas=y' \
+          'CONFIG_PACKAGE_kmod-usb-net=y' \
+          'CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y' \
+          'CONFIG_PACKAGE_usb-modeswitch=y' \
+          'CONFIG_PACKAGE_uqmi=y' \
+          'CONFIG_PACKAGE_umbim=y' \
+          'CONFIG_PACKAGE_mwan3=y' \
+          'CONFIG_PACKAGE_luci-app-mwan3=y' \
+          'CONFIG_PACKAGE_samba4-server=y' \
+          'CONFIG_PACKAGE_luci-app-samba4=y' \
+          'CONFIG_PACKAGE_kmod-tun=y' \
+          'CONFIG_PACKAGE_starvpn=y' \
+          > .config
 
 
           make defconfig
 
 
 
-      - name: Build firmware
+      - name: Build
         working-directory: immortalwrt
         run: |
 
@@ -607,7 +303,18 @@ EOF
 
 
 
-      - name: Upload firmware
+      - name: Check firmware
+        working-directory: immortalwrt
+        run: |
+
+          find \
+          bin/targets/mediatek/filogic \
+          -name "*sysupgrade*" \
+          | grep .
+
+
+
+      - name: Upload
         uses: actions/upload-artifact@v4
 
         with:
